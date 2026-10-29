@@ -9,7 +9,7 @@ func cloud(id, label string, f Format, urls []string, home string) Spec {
 
 func cnCloud(id, label string) Spec {
 	return Spec{ID: id, Label: label + "（axpwx/IP-Data）", Category: "hosting", Format: CIDRLines,
-		URLs: axp(id), Every: 7 * day, Homepage: "https://github.com/axpwx/IP-Data", License: "MIT", Weight: 80}
+		URLs: axp(id), Every: day, Homepage: "https://github.com/axpwx/IP-Data", License: "MIT", Weight: 80}
 }
 
 func crawler(id, label string, urls []string) Spec {

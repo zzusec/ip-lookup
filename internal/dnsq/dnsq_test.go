@@ -19,6 +19,24 @@ func TestReversed(t *testing.T) {
 	}
 }
 
+// Query names must be absolute, or the resolver asks again with every search
+// domain of the host after each not-found answer.
+func TestQueryNames(t *testing.T) {
+	v4, v6 := netip.MustParseAddr("192.0.2.1"), netip.MustParseAddr("2001:db8::1")
+	for _, c := range [][2]string{
+		{dnsblName(v4, "bl.spamcop.net"), "1.2.0.192.bl.spamcop.net."},
+		{originName(v4), "1.2.0.192.origin.asn.cymru.com."},
+		{originName(v6), reversed(v6) + ".origin6.asn.cymru.com."},
+		{asName(13335), "AS13335.asn.cymru.com."},
+		{abs("host.example"), "host.example."},
+		{abs("host.example."), "host.example."},
+	} {
+		if c[0] != c[1] {
+			t.Errorf("got %q, want %q", c[0], c[1])
+		}
+	}
+}
+
 // Live network test; run with IPL_NET=1.
 func TestLive(t *testing.T) {
 	if os.Getenv("IPL_NET") == "" {

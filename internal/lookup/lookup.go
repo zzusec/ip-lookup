@@ -62,14 +62,28 @@ func (s *Service) online(ctx context.Context, o *sources.Out, a netip.Addr, asn 
 	defer cancel()
 	var wg sync.WaitGroup
 	var dnsSources, after []model.Source
+	var cy model.Source
 	q := sources.Query{Addr: a, ASN: asn, Prefix: prefix}
-	wg.Add(1)
+	first := make(chan struct{}) // closed when the first phase is done
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		dnsSources = s.dnsChecks(ctx, o, a)
+	}()
+	go func() {
+		defer wg.Done()
 		// RPKI validates the announced route and its origin, which Team Cymru
-		// has just reported; the network of the offline databases is not a route.
+		// reports; the network of the offline databases is not a route.
+		// Without Team Cymru the route comes from RIPEstat in the first phase.
+		cy = s.cymru(ctx, o, a)
 		h := o.Hints()
+		if h["bgp_prefix:cymru"] == "" {
+			select {
+			case <-first:
+			case <-ctx.Done():
+			}
+			h = o.Hints()
+		}
 		aq := q
 		aq.Prefix, _ = netip.ParsePrefix(firstOf(h, "bgp_prefix:cymru", "bgp_prefix:ripe"))
 		if n, err := strconv.Atoi(firstOf(h, "origin_asn:cymru", "origin_asn:ripe")); err == nil && n > 0 {
@@ -78,10 +92,12 @@ func (s *Service) online(ctx context.Context, o *sources.Out, a netip.Addr, asn 
 		after = s.Online.Run(ctx, aq, o, true)
 	}()
 	st := s.Online.Run(ctx, q, o, false)
+	close(first)
 	wg.Wait()
 	st = append(st, after...)
 	o.Do(func(r *model.Result) {
 		r.Sources = append(r.Sources, st...)
+		r.Sources = append(r.Sources, cy)
 		r.Sources = append(r.Sources, dnsSources...)
 	})
 }

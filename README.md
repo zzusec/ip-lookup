@@ -12,9 +12,9 @@ curl ip.llkan.com/json/8.8.8.8 # 完整 JSON
 
 ## 工作方式
 
-每次查询会汇总三类数据，再由打分规则得出结论。网页上会列出每一条判断依据和每个数据源的响应状态。
+每次查询会汇总三类数据，再由打分规则得出结论。网页上会列出每一条判断依据，并在地图上标出定位点和精度范围；各数据源的响应状态和耗时只在 API 结果的 `sources` 字段里提供。
 
-- **离线数据**：由服务端定时下载，查询时直接读取本地文件，耗时在毫秒级。
+- **离线数据**：服务端每天检查一次更新（带 ETag 的条件请求，没变就不重新下载），查询时直接读取本地文件，耗时在毫秒级。
   - 地理库：Merged-IP（合并了 GeoLite2、IPinfo Lite 和 DB-IP）、DB-IP Lite、ip2region。
   - AS 分类：bgp.tools 的 AS 分类和标签。
   - IP 名单：Tor 出口、iCloud 专用代理、VPN 与机房网段、公开代理、各云厂商官方网段、搜索引擎爬虫、Spamhaus DROP、FireHOL、IPsum 等，共 60 多份。
@@ -73,4 +73,5 @@ systemctl daemon-reload && systemctl enable --now ip-lookup
 - GeoLite2、IPinfo Lite（经 Merged-IP 合并）：CC BY-SA 4.0。DB-IP Lite：CC BY 4.0，页面已按要求署名。
 - ip2region：Apache-2.0。lord-alfred/ipranges：CC0。axpwx/IP-Data、monosans/proxy-list：MIT。stamparm/ipsum：Unlicense。proxifly/free-proxy-list：GPL-3.0。
 - X4BNet/lists_vpn、FireHOL、bgp.tools、Spamhaus DROP、各云厂商网段：按各自网站的使用条款。
+- 地图：Leaflet 1.9.4（BSD-2-Clause，随代码放在 `web/static/vendor/leaflet/`），底图来自 OpenStreetMap（ODbL），页面带有署名。
 - ip-api.com 的免费接口仅限非商业用途，商业部署需要购买它的 Pro 版，或者从 `internal/sources/all.go` 中移除这个数据源。

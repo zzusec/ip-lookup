@@ -8,8 +8,6 @@ const KIND = {residential: '家庭宽带', mobile: '移动网络', hosting: '机
 const HUE = {residential: 150, mobile: 195, hosting: 28, cdn: 265, business: 215, education: 175, government: 330,
   tor: 4, vpn: 4, proxy: 4, abuser: 4, abuse: 4, crawler: 45, icloud_relay: 210, public_service: 190, anycast: 240, satellite: 280, org: 215};
 const CONF = {high: ['高', 3], medium: ['中', 2], low: ['低', 1]};
-const SRC_STATUS = {ok: ['正常', 'pos'], empty: ['无数据', 'mut'], error: ['错误', 'neg'], timeout: ['超时', 'neg'], skipped: ['跳过', 'mut'], quota: ['额度用尽', 'neg']};
-const SRC_KIND = {offline: '离线库', online: '在线接口', dns: 'DNS'};
 const V4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 let zhRegion, enRegion;
 try { zhRegion = new Intl.DisplayNames(['zh-CN'], {type: 'region'}); enRegion = new Intl.DisplayNames(['en'], {type: 'region'}); } catch {}
@@ -52,7 +50,6 @@ function ccName(c) {
 }
 const enName = cc => { try { return /^[a-z]{2}$/i.test(cc || '') && enRegion?.of(cc.toUpperCase()) || ''; } catch { return ''; } };
 const bi = (zh, en, code) => (zh || en) ? (zh || en) + (zh && en && en !== zh ? ' ' + en : '') + (code ? `（${code}）` : '') : code || '';
-const join = (arr, sep) => arr.flatMap((x, i) => i ? [sep, x] : [x]);
 const fmtTime = s => { const d = new Date(s); return isNaN(d) ? s : d.toLocaleString('zh-CN', {dateStyle: 'short', timeStyle: 'short'}); };
 
 function isV6(s) {
@@ -122,7 +119,7 @@ const ipHead = r => h('div', {class: 'v-ip'}, mono(r.ip),
   h('button', {type: 'button', class: 'btn sm', onclick: e => copy(r.ip, e.currentTarget)}, '复制'),
   r.version ? tag('IPv' + r.version) : null);
 
-function verdictCard(r) {
+function verdictCard(r, pending) {
   const v = r.verdict || {}, conf = CONF[v.confidence], hue = HUE[v.type];
   return h('section', {class: hue == null ? 'card verdict' : 'card verdict hue', style: hue == null ? null : {'--h': hue}},
     h('div', null,
@@ -137,16 +134,22 @@ function verdictCard(r) {
         h('span', null, r.mode === 'full' ? '完整查询' : '快速查询（仅离线库）'),
         r.queried_at ? h('span', null, '查询于 ' + fmtTime(r.queried_at)) : null,
         r.elapsed_ms != null ? h('span', null, `耗时 ${r.elapsed_ms} ms`) : null)),
-    scoreBox(r.score || {}),
+    scoreBox(r.score || {}, pending ? 'pending' : r.mode === 'fast' ? 'offline' : ''),
     evidence(v.evidence));
 }
 
-function scoreBox(s) {
+// state is 'pending' while the full lookup runs, so no number is shown that
+// the online checks would change, and 'offline' when only the offline
+// databases answered.
+function scoreBox(s, state) {
+  if (state === 'pending') return h('div', {class: 'score'},
+    h('div', {class: 'ring wait', style: {'--v': 0, '--h': 200}, role: 'img', 'aria-label': '纯净度评估中'}, spinner(), h('span', null, '评估中')),
+    h('span', {class: 'mut'}, '等待在线数据源和 DNS'));
   const v = clamp(s.value), level = s.level || LEVEL(v);
   return h('div', {class: 'score'},
     h('div', {class: 'ring', style: {'--v': v, '--h': scoreHue(v)}, role: 'img', 'aria-label': `纯净度 ${v} 分，${level}`},
       h('b', null, String(v)), h('span', null, level)),
-    h('span', {class: 'mut'}, '纯净度（满分 100）'),
+    h('span', {class: 'mut'}, state === 'offline' ? '仅依据离线库，未含在线风险检查' : '纯净度（满分 100）'),
     s.factors?.length ? h('ul', {class: 'factors'}, s.factors.map(f => h('li', null, h('span', null, f.name),
       h('b', {class: f.delta > 0 ? 'pos' : f.delta < 0 ? 'neg' : 'mut'}, signed(f.delta))))) : null);
 }
@@ -188,6 +191,55 @@ function geoCard(g) {
     ['电话区号', g.calling_code],
     ['欧盟成员', g.is_eu && '是'],
   ]) || empty('没有地理信息'));
+}
+
+// The map card is kept while the location stays the same, so the full result
+// replacing the fast one does not reload the map.
+let mapView = null, leaflet = null;
+function mapCard(g) {
+  const lat = Number(g.lat), lon = Number(g.lon), acc = Number(g.accuracy_km) || 0, key = [lat, lon, acc].join();
+  if (!(Math.abs(lat) <= 90 && Math.abs(lon) <= 180) || !lat && !lon) return dropMap();
+  if (mapView?.key !== key) {
+    dropMap();
+    const box = h('div', {class: 'map'});
+    mapView = {key, lat, lon, acc, box, el: h('section', {class: 'card mapcard'},
+      h('h2', null, '位置地图', acc ? h('small', null, `圆圈为约 ${acc} km 的定位精度`) : null), box)};
+  }
+  return mapView.el;
+}
+function dropMap() { mapView?.map?.remove(); mapView = null; return null; }
+
+// Leaflet is fetched only when a map is shown, after the results are on screen.
+function loadLeaflet() {
+  const load = (tag, props) => new Promise((resolve, reject) => document.head.append(Object.assign(document.createElement(tag), props,
+    {onload: resolve, onerror: () => reject(new Error('无法下载地图组件'))})));
+  return leaflet ||= Promise.all([load('link', {rel: 'stylesheet', href: '/static/vendor/leaflet/leaflet.css?v=1.9.4'}),
+    load('script', {src: '/static/vendor/leaflet/leaflet.js?v=1.9.4'})])
+    .then(() => window.L || Promise.reject(new Error('地图组件无效')), e => { leaflet = null; throw e; });
+}
+async function mountMap() {
+  const v = mapView;
+  if (!v?.el.isConnected || v.loading) return;
+  if (v.map) return void v.map.invalidateSize();
+  v.loading = true;
+  try {
+    const L = await loadLeaflet();
+    if (v !== mapView || !v.el.isConnected) return;
+    const at = [v.lat, v.lon], color = getComputedStyle(v.box).getPropertyValue('--acc').trim() || '#0a6e8a';
+    v.box.replaceChildren();
+    const m = v.map = L.map(v.box, {scrollWheelZoom: false, dragging: !L.Browser.mobile});
+    if (v.acc) {
+      m.fitBounds(L.latLng(at).toBounds(v.acc * 2000), {maxZoom: 12, padding: [16, 16]});
+      L.circle(at, {radius: v.acc * 1000, color, weight: 1, fillOpacity: .1}).addTo(m);
+    } else m.setView(at, 10);
+    // Tiles send the site origin as Referer, which the OSM tile policy requires;
+    // the page itself sends none, so the queried address is not exposed.
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19, referrerPolicy: 'strict-origin-when-cross-origin',
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors'}).addTo(m);
+    L.circleMarker(at, {radius: 6, color, weight: 2, fillColor: color, fillOpacity: .9}).addTo(m);
+  } catch (e) {
+    v.box.replaceChildren(empty('地图加载失败：' + e.message));
+  } finally { v.loading = false; }
 }
 
 function netCard(n) {
@@ -279,21 +331,6 @@ function portsView(p) {
   ]) || empty('没有开放端口记录');
 }
 
-function sourcesCard(list) {
-  if (!list?.length) return null;
-  const ok = list.filter(s => s.status === 'ok').length;
-  return card(['数据源状态', h('small', null, `${ok} / ${list.length} 个返回了数据`)],
-    table(['名称', '类型', '状态', h('th', {class: 'num'}, '耗时'), '错误', '缓存'], list.map(s => {
-      const [t, c] = SRC_STATUS[s.status] || [s.status, 'mut'];
-      return tr([s.name, SRC_KIND[s.kind] || s.kind, h('span', {class: c}, t), td(`${s.ms ?? 0} ms`, 'num'), td(s.error, 'wr'), s.cached ? '是' : '']);
-    })));
-}
-
-function rawCard(raw) {
-  const entries = Object.entries(raw || {});
-  if (!entries.length) return null;
-  return card('原始数据', entries.map(([k, v]) => h('details', null, h('summary', null, k), h('pre', null, JSON.stringify(v, null, 2)))));
-}
 let enToCC;
 function ccFromEN(name) {
   if (!enToCC) {
@@ -347,7 +384,7 @@ function connPanel() {
   const L = [['v4', 'IPv4'], ['v6', 'IPv6'], ['pref', '优先协议'], ['cf', 'Cloudflare 视角'], ['cn', '国内出口'], ['dns', 'DNS 出口'], ['rtc', 'WebRTC']];
   const rows = {}, res = {}, hints = h('ul', {class: 'hints', 'aria-live': 'polite'});
   const el = card(['我的连接', h('small', null, '由浏览器直接请求第三方接口检测')],
-    h('dl', {class: 'kv'}, L.map(([k, t]) => [h('dt', null, t), rows[k] = h('dd', null, h('span', {class: 'mut'}, '检测中…'))])), hints);
+    h('dl', {class: 'kv fit'}, L.map(([k, t]) => [h('dt', null, t), rows[k] = h('dd', null, h('span', {class: 'mut'}, '检测中…'))])), hints);
   let result = null, pending = L.length;
   const set = (k, ...c) => rows[k].replaceChildren(...c.flat().filter(Boolean));
   const muted = t => h('span', {class: 'mut'}, t);
@@ -398,17 +435,19 @@ function connPanel() {
 let conn = null, seq = 0, ctl = null;
 function setStatus(cls, ...kids) { statusEl.className = 'status' + (cls ? ' ' + cls : ''); statusEl.replaceChildren(...kids); }
 
-function render(r) {
+function render(r, pending) {
   const parts = r.bogon
     ? [h('section', {class: 'card verdict bogon'}, ipHead(r), h('p', {class: 'v-label'}, '私网或保留地址'), h('p', null, r.bogon))]
-    : [verdictCard(r), h('div', {class: 'grid2'}, geoCard(r.geo || {}), netCard(r.network || {})), geoSrcCard(r), riskCard(r)];
+    : [verdictCard(r, pending), h('div', {class: 'grid2'}, h('div', {class: 'col'}, geoCard(r.geo || {}), mapCard(r.geo || {})),
+      netCard(r.network || {})), geoSrcCard(r), riskCard(r)];
   if (conn) { parts.push(conn.el); conn.setResult(r); }
-  if (!r.bogon) parts.push(sourcesCard(r.sources), rawCard(r.raw));
   out.replaceChildren(...parts.filter(Boolean));
   out.classList.remove('stale');
+  mountMap();
 }
 
-// fast (offline only) renders first, then full replaces it; a newer lookup cancels older ones.
+// fast (offline only) and full start together. fast is shown first with the
+// score held back until full replaces it; a newer lookup cancels older ones.
 async function lookup(ip) {
   const my = ++seq, c = new AbortController();
   ctl?.abort(); ctl = c;
@@ -418,9 +457,14 @@ async function lookup(ip) {
   const run = (mode, ms) => timed(ms, s => getJSON('/api/lookup?' + new URLSearchParams(ip ? {ip, mode} : {mode}), s), c.signal);
   out.classList.add('stale');
   setStatus('', spinner(), '正在查询…');
+  const fastReq = run('fast', 15000);
+  let full = null;
+  const fullReq = run('full', 25000).then(v => (full = v));
+  fullReq.catch(() => {}); // awaited below once fast is on screen
   let r;
-  try { r = await run('fast', 15000); } catch (e) {
+  try { r = await fastReq; } catch (e) {
     if (my !== seq) return;
+    c.abort();
     if (!ip) conn = connPanel();
     out.replaceChildren(h('section', {class: 'card errbox'}, h('h2', null, '查询失败'), h('p', null, errText(e))), ...(conn ? [conn.el] : []));
     out.classList.remove('stale');
@@ -428,15 +472,18 @@ async function lookup(ip) {
   }
   if (my !== seq) return;
   if (!ip && !r.bogon) conn = connPanel();
-  render(r);
-  if (r.bogon || r.mode === 'full') return setStatus();
-  setStatus('', spinner(), '正在查询在线数据源和 DNS，最长约 10 秒…');
-  try { r = await run('full', 25000); } catch (e) {
+  if (r.bogon) { render(r); return setStatus(); }
+  if (!full) {
+    render(r, true);
+    setStatus('', spinner(), '正在查询在线数据源和 DNS，最长约 10 秒…');
+  }
+  try { await fullReq; } catch (e) {
     if (my !== seq) return;
+    render(r);
     return setStatus('warn', `完整查询失败：${errText(e)}。下面是仅查离线库的快速结果。`);
   }
   if (my !== seq) return;
-  render(r);
+  render(full);
   setStatus();
 }
 
@@ -471,18 +518,4 @@ document.addEventListener('click', e => {
 });
 addEventListener('popstate', () => route(false));
 
-async function credits() {
-  const box = $('#credits');
-  try {
-    const rep = await timed(10000, s => getJSON('/api/sources', s)), ds = rep.datasets || [], on = rep.online || [];
-    box.replaceChildren(...[
-      ds.length && h('p', null, '离线数据集：'),
-      ds.length && h('ul', null, ds.map(d => h('li', null, d.homepage ? ext(d.homepage, d.label || d.id) : d.label || d.id,
-        d.license ? `（${d.license}）` : '', d.updated_at ? ' 更新于 ' + fmtTime(d.updated_at) : ''))),
-      on.length && h('p', null, '在线接口：', join(on.map(o => o.homepage ? ext(o.homepage, o.name) : o.name), '、')),
-    ].filter(Boolean));
-  } catch (e) { box.replaceChildren(h('p', null, '数据源列表加载失败：' + errText(e))); }
-}
-
 route(true);
-credits();

@@ -3,7 +3,10 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io/fs"
 	"log/slog"
@@ -33,10 +36,12 @@ func (s *Server) Handler() (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.index = idx
 	s.limit = newRateLimiter(20, time.Minute) // full lookups of arbitrary addresses per client
 	static, err := fs.Sub(s.Web, "static")
 	if err != nil {
+		return nil, err
+	}
+	if s.index, err = versioned(idx, static, "style.css", "app.js", "favicon.svg"); err != nil {
 		return nil, err
 	}
 	mux := http.NewServeMux()
@@ -82,6 +87,20 @@ type statusWriter struct {
 }
 
 func (w *statusWriter) WriteHeader(c int) { w.code = c; w.ResponseWriter.WriteHeader(c) }
+
+// versioned adds a content hash to the URLs of the named static files in
+// page, so browsers drop their cached copies when a file changes.
+func versioned(page []byte, static fs.FS, names ...string) ([]byte, error) {
+	for _, n := range names {
+		b, err := fs.ReadFile(static, n)
+		if err != nil {
+			return nil, err
+		}
+		sum := sha256.Sum256(b)
+		page = bytes.ReplaceAll(page, []byte(`"/static/`+n+`"`), []byte(`"/static/`+n+"?v="+hex.EncodeToString(sum[:4])+`"`))
+	}
+	return page, nil
+}
 
 func cacheFor(h http.Handler, d time.Duration) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

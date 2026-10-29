@@ -3,8 +3,39 @@ package server
 import (
 	"net/http/httptest"
 	"net/netip"
+	"regexp"
 	"testing"
+	"testing/fstest"
+
+	"github.com/zzusec/ip-lookup/web"
 )
+
+func TestVersioned(t *testing.T) {
+	static := fstest.MapFS{"app.js": {Data: []byte("x")}}
+	page, err := versioned([]byte(`<script src="/static/app.js"></script><img src="/static/app.js">`), static, "app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The first four bytes of sha256("x").
+	if want := `<script src="/static/app.js?v=2d711642"></script><img src="/static/app.js?v=2d711642">`; string(page) != want {
+		t.Errorf("got %s", page)
+	}
+	if _, err := versioned(page, static, "gone.js"); err == nil {
+		t.Error("missing file accepted")
+	}
+}
+
+// Every static file the page loads must carry a version, or browsers keep
+// running the previous release for a day after an update.
+func TestPageAssetsVersioned(t *testing.T) {
+	s := &Server{Web: web.FS}
+	if _, err := s.Handler(); err != nil {
+		t.Fatal(err)
+	}
+	if m := regexp.MustCompile(`"/static/[^"?]*"`).Find(s.index); m != nil {
+		t.Errorf("unversioned asset %s", m)
+	}
+}
 
 func TestClientIP(t *testing.T) {
 	s := &Server{TrustProxy: true}

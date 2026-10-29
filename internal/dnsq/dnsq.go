@@ -62,7 +62,7 @@ func (r *Resolver) Reverse(ctx context.Context, a netip.Addr) ([]string, bool, e
 	}
 	for _, n := range names[:min(len(names), 3)] {
 		c2, cancel2 := r.ctx(ctx)
-		addrs, err := r.r.LookupNetIP(c2, "ip", n)
+		addrs, err := r.r.LookupNetIP(c2, "ip", abs(n))
 		cancel2()
 		if err == nil && slices.ContainsFunc(addrs, func(x netip.Addr) bool { return x.Unmap() == a.Unmap() }) {
 			return names, true, nil
@@ -70,6 +70,11 @@ func (r *Resolver) Reverse(ctx context.Context, a netip.Addr) ([]string, bool, e
 	}
 	return names, false, nil
 }
+
+// abs makes name absolute. The Go resolver still appends the search domains
+// of resolv.conf to relative names, so every not-found answer, the usual
+// DNSBL reply, would be asked again once per search domain.
+func abs(name string) string { return strings.TrimSuffix(name, ".") + "." }
 
 func notFound(err error) bool {
 	var de *net.DNSError
@@ -104,13 +109,9 @@ type Origin struct {
 
 // Cymru asks Team Cymru for the origin AS, prefix, country and registry of a.
 func (r *Resolver) Cymru(ctx context.Context, a netip.Addr) (Origin, error) {
-	zone := "origin.asn.cymru.com"
-	if a.Unmap().Is6() {
-		zone = "origin6.asn.cymru.com"
-	}
 	c, cancel := r.ctx(ctx)
 	defer cancel()
-	txt, err := r.r.LookupTXT(c, reversed(a)+"."+zone)
+	txt, err := r.r.LookupTXT(c, originName(a))
 	if err != nil {
 		return Origin{}, err
 	}
@@ -134,13 +135,23 @@ func (r *Resolver) Cymru(ctx context.Context, a netip.Addr) (Origin, error) {
 	}
 	c2, cancel2 := r.ctx(ctx)
 	defer cancel2()
-	if txt, err := r.r.LookupTXT(c2, "AS"+strconv.Itoa(best.ASN)+".asn.cymru.com"); err == nil && len(txt) > 0 {
+	if txt, err := r.r.LookupTXT(c2, asName(best.ASN)); err == nil && len(txt) > 0 {
 		if f := fields(txt[0]); len(f) >= 5 {
 			best.ASName = f[4]
 		}
 	}
 	return best, nil
 }
+
+func originName(a netip.Addr) string {
+	zone := "origin.asn.cymru.com"
+	if a.Unmap().Is6() {
+		zone = "origin6.asn.cymru.com"
+	}
+	return abs(reversed(a) + "." + zone)
+}
+
+func asName(asn int) string { return abs("AS" + strconv.Itoa(asn) + ".asn.cymru.com") }
 
 func fields(t string) []string {
 	f := strings.Split(t, "|")
@@ -157,6 +168,8 @@ var Zones = []string{
 	"rbl.interserver.net", "truncate.gbudb.net", "bl.nordspam.com",
 }
 
+func dnsblName(a netip.Addr, zone string) string { return abs(reversed(a) + "." + zone) }
+
 // DNSBL checks a against every zone concurrently. IPv6 is skipped by most
 // zones, so only IPv4 is queried.
 func (r *Resolver) DNSBL(ctx context.Context, a netip.Addr) []model.DNSBL {
@@ -172,7 +185,7 @@ func (r *Resolver) DNSBL(ctx context.Context, a netip.Addr) []model.DNSBL {
 			res := model.DNSBL{Zone: z}
 			c, cancel := r.ctx(ctx)
 			defer cancel()
-			addrs, err := r.r.LookupNetIP(c, "ip4", reversed(a)+"."+z)
+			addrs, err := r.r.LookupNetIP(c, "ip4", dnsblName(a, z))
 			switch {
 			case err == nil && len(addrs) > 0 && addrs[0].Is4() && addrs[0].As4()[0] == 127:
 				res.Listed, res.Answer = true, addrs[0].String()

@@ -1,0 +1,42 @@
+[Unit]
+Description=ip-lookup IP type and intelligence lookup
+Documentation=https://github.com/zzusec/ip-lookup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=iplookup
+Group=iplookup
+EnvironmentFile=/etc/ip-lookup.env
+ExecStart=/opt/ip-lookup/ip-lookup
+Restart=on-failure
+RestartSec=5
+
+# Small hosts: cap memory and let the kernel pick this service before others
+# when memory runs out. Datasets are memory-mapped, so most of the RSS is
+# reclaimable page cache.
+MemoryHigh=200M
+MemoryMax=300M
+OOMScoreAdjust=500
+Environment=GOMEMLIMIT=150MiB
+Environment=GOGC=50
+
+StateDirectory=ip-lookup
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

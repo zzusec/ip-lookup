@@ -1,0 +1,8 @@
+/ip-lookup
+/dist/
+/data/
+*.mmdb
+*.mmdb.gz
+*.xdb
+*.env
+!deploy/*.env.example

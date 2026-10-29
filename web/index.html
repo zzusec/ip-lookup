@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>IP 类型查询</title>
+<meta name="description" content="查询出口 IP 的类型（家宽、机房、移动等）、纯净度和基础信息">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <div class="wrap top-in">
+    <a class="brand" href="/" data-nav><img src="/static/favicon.svg" alt="" width="24" height="24">IP 类型查询</a>
+    <form id="q" class="search" autocomplete="off" novalidate>
+      <label for="qi" class="vh">IP 地址</label>
+      <input id="qi" type="text" spellcheck="false" autocapitalize="off" maxlength="64" placeholder="输入 IPv4 或 IPv6 地址">
+      <button type="submit" class="btn primary">查询</button>
+      <button type="button" id="me" class="btn">查我的 IP</button>
+    </form>
+  </div>
+  <p id="qerr" class="wrap qerr" role="alert" hidden></p>
+</header>
+<main class="wrap">
+  <div id="status" class="status" aria-live="polite"></div>
+  <div id="out"></div>
+</main>
+<footer class="wrap foot">
+  <div id="credits"></div>
+  <p>ip-api 等免费接口仅限非商业用途。<a href="https://github.com/zzusec/ip-lookup" target="_blank" rel="noopener noreferrer">GitHub 源码</a></p>
+</footer>
+</body>
+</html>

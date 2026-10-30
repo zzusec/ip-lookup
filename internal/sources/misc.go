@@ -88,11 +88,11 @@ func zxinc() *Provider {
 			if err := json.Unmarshal(raw, &d); err != nil {
 				return err
 			}
-			text := strings.TrimSpace(strings.ReplaceAll(d.Data.Location, "–", " "))
-			if text == "" {
+			g := zxincGeo(d.Data.Location, d.Data.Country, d.Data.Local)
+			if g.Text == "" && g.Country == "" {
 				return ErrNotFound
 			}
-			addGeo(o, model.GeoSource{Source: "纯真 (zxinc)", Text: text})
+			addGeo(o, g)
 			return nil
 		}}
 }
@@ -112,7 +112,9 @@ func baidu() *Provider {
 			if d.Status != "0" || len(d.Data) == 0 || d.Data[0].Location == "" {
 				return ErrNotFound
 			}
-			addGeo(o, model.GeoSource{Source: "百度 IP", Text: d.Data[0].Location})
+			var region, city string
+			o.Do(func(r *model.Result) { region, city = r.Geo.Region, r.Geo.City })
+			addGeo(o, baiduGeo(d.Data[0].Location, region, city))
 			return nil
 		}}
 }

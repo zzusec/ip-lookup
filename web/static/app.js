@@ -10,7 +10,7 @@ const HUE = {residential: 150, mobile: 195, hosting: 28, cdn: 265, business: 215
 const CONF = {high: ['高', 3], medium: ['中', 2], low: ['低', 1]};
 const V4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 let zhRegion, enRegion;
-try { zhRegion = new Intl.DisplayNames(['zh-CN'], {type: 'region'}); enRegion = new Intl.DisplayNames(['en'], {type: 'region'}); } catch {}
+try { zhRegion = new Intl.DisplayNames(['zh-CN'], {type: 'region', style: 'short'}); enRegion = new Intl.DisplayNames(['en'], {type: 'region'}); } catch {}
 
 // All API strings reach the DOM through createElement/append (text nodes), never innerHTML.
 function h(tag, attrs, ...kids) {
@@ -49,6 +49,9 @@ function ccName(c) {
   return `${flag(c)} ${n && n !== c ? n + ' ' : ''}${c}`;
 }
 const enName = cc => { try { return /^[a-z]{2}$/i.test(cc || '') && enRegion?.of(cc.toUpperCase()) || ''; } catch { return ''; } };
+const zhName = cc => { try { return zhRegion?.of(cc) || cc; } catch { return cc; } };
+// One spelling per country, flag and Chinese name, whatever language the source answered in.
+const countryOf = s => /^[a-z]{2}$/i.test(s.country_code || '') ? `${flag(s.country_code)} ${zhName(s.country_code.toUpperCase())}` : s.country || '';
 const bi = (zh, en, code) => (zh || en) ? (zh || en) + (zh && en && en !== zh ? ' ' + en : '') + (code ? `（${code}）` : '') : code || '';
 const fmtTime = s => { const d = new Date(s); return isNaN(d) ? s : d.toLocaleString('zh-CN', {dateStyle: 'short', timeStyle: 'short'}); };
 
@@ -120,22 +123,38 @@ const ipHead = r => h('div', {class: 'v-ip'}, mono(r.ip),
   r.version ? tag('IPv' + r.version) : null);
 
 function verdictCard(r, pending) {
-  const v = r.verdict || {}, conf = CONF[v.confidence], hue = HUE[v.type];
+  const v = r.verdict || {}, conf = CONF[v.confidence], hue = HUE[v.type], n = r.network || {};
   return h('section', {class: hue == null ? 'card verdict' : 'card verdict hue', style: hue == null ? null : {'--h': hue}},
     h('div', null,
       ipHead(r),
       h('p', {class: 'v-label'}, v.label || v.type_label || '未知'),
-      h('div', {class: 'tags'},
-        v.type_label ? tag(v.type_label, hue) : null,
-        (v.usage_labels || []).map((l, i) => tag(l, HUE[v.usage?.[i]] ?? 4)),
-        conf ? h('span', {class: 'conf c' + conf[1]}, '置信度', h('i'), h('i'), h('i'), ' ' + conf[0]) : null),
-      nativeLine(r.native || {}),
+      kv([
+        ['ASN', n.asn && [ext('https://bgp.tools/as/' + n.asn, 'AS' + n.asn), n.as_name ? ' – ' + n.as_name : '']],
+        ['AS 域名', n.as_domain],
+        ['IP 范围', mono(n.net_range || n.bgp_prefix || n.prefix)],
+        ['位置', places(r)],
+        ['IP 来源', nativeLine(r.native || {})],
+        ['IP 属性', h('div', {class: 'tags'},
+          v.type_label ? tag(v.type_label, hue) : null,
+          (v.usage_labels || []).map((l, i) => tag(l, HUE[v.usage?.[i]] ?? 4)),
+          conf ? h('span', {class: 'conf c' + conf[1]}, '置信度', h('i'), h('i'), h('i'), ' ' + conf[0]) : null)],
+      ]),
       h('p', {class: 'meta'},
         h('span', null, r.mode === 'full' ? '完整查询' : '快速查询（仅离线库）'),
         r.queried_at ? h('span', null, '查询于 ' + fmtTime(r.queried_at)) : null,
         r.elapsed_ms != null ? h('span', null, `耗时 ${r.elapsed_ms} ms`) : null)),
-    scoreBox(r.score || {}, pending ? 'pending' : r.mode === 'fast' ? 'offline' : ''),
-    evidence(v.evidence));
+    scoreBox(r.score || {}, pending ? 'pending' : r.mode === 'fast' ? 'offline' : ''));
+}
+
+// Where the main databases place the address, one line each; ip2region only
+// for China, where it is the most precise and elsewhere often vague.
+const PLACE_SRC = ['Merged-IP', 'ip2region', 'DB-IP City Lite', 'IP2Location.io', 'ipinfo.io', 'ip-api.com'];
+function places(r) {
+  const list = r.geo_sources || [], cn = (r.geo?.country_code || '').toUpperCase() === 'CN';
+  const rows = PLACE_SRC.filter(n => cn || n !== 'ip2region').map(n => list.find(s => s.source === n))
+    .filter(s => s && has([s.country, s.country_code]));
+  return rows.length ? h('div', {class: 'locs'}, rows.map(s => h('div', null, h('span', {class: 'mut'}, s.source),
+    h('span', null, [countryOf(s), s.region, s.city !== s.region && s.city].filter(has).join(', '))))) : null;
 }
 
 // state is 'pending' while the full lookup runs, so no number is shown that
@@ -158,18 +177,18 @@ function nativeLine(n) {
   const reg = n.registered_country, geo = n.geo_country;
   if (!has([n.label, reg, geo])) return null;
   const diff = reg && geo && reg.toUpperCase() !== geo.toUpperCase() ? 'diff' : null;
-  return h('div', {class: 'native'},
+  return h('div', {class: 'tags'},
     tag(n.label || '未知', {native: 150, broadcast: 28}[n.status] ?? null),
     reg || geo ? h('span', {class: 'cmp'},
       h('span', null, '注册国 ', h('b', {class: diff}, ccName(reg) || '未知')),
       h('span', null, '定位国 ', h('b', {class: diff}, ccName(geo) || '未知'))) : null,
     n.registry ? h('span', {class: 'mut'}, n.registry) : null,
-    n.detail ? h('span', {class: 'mut'}, n.detail) : null);
+    n.status === 'unknown' && n.detail ? h('span', {class: 'mut'}, n.detail) : null);
 }
 
-function evidence(ev) {
+function evidenceCard(ev) {
   if (!ev?.length) return null;
-  return h('div', {class: 'v-ev'}, h('h3', null, '判定依据'),
+  return card('判定依据',
     table(['依据', h('th', {class: 'num'}, '权重'), '来源', '说明'], ev.map(e => tr([
       tag(KIND[e.kind] || e.kind, HUE[e.kind] ?? null), td(h('span', {class: e.weight < 0 ? 'w n' : 'w'}, signed(e.weight)), 'num'),
       e.source, td(e.detail, 'wr')]))));
@@ -288,49 +307,14 @@ function geoSrcCard(r) {
   const rows = list.map(s => {
     const d = differs(s); diff += d;
     const who = s.isp && s.org && s.isp !== s.org ? `${s.isp} / ${s.org}` : s.isp || s.org;
-    return tr([s.source, s.country ? `${flag(s.country_code)} ${s.country}`.trim() : ccName(s.country_code), s.region, s.city,
-      td(who, 'wr'), s.asn ? 'AS' + s.asn : '', s.type, td(s.text, 'wr')], d ? 'hl' : null);
+    // A source that answered with a line of text only keeps it across the place columns.
+    const place = has([s.country, s.country_code, s.region, s.city]) ? [countryOf(s), s.region, s.city]
+      : [h('td', {colspan: 3, class: 'wr'}, s.text)];
+    return tr([s.source, ...place, td(who, 'wr'), s.asn ? 'AS' + s.asn : '', s.type], d ? 'hl' : null);
   });
   return card(['多源地理对照', diff ? h('small', null, '高亮行的国家与主结果不一致') : null],
-    table(['来源', '国家', '地区', '城市', 'ISP / 组织', 'ASN', '类型', '文本'], rows));
+    table(['来源', '国家', '地区', '城市', 'ISP / 组织', 'ASN', '类型'], rows));
 }
-const riskHue = v => Math.round(140 - 1.4 * v);
-
-function riskCard(r) {
-  const full = r.mode === 'full', risk = r.risk || [], lists = r.lists || [], dnsbl = r.dnsbl || [];
-  const sec = (title, body) => body ? [h('h3', null, title), body] : null;
-  const groups = {};
-  for (const l of lists) (groups[l.category] ||= []).push(l);
-  return card('风险',
-    sec('风险评分（越高越危险）', risk.length ? h('div', {class: 'risk'}, risk.map(x => {
-      const v = clamp(x.value);
-      return [h('span', null, x.source),
-        h('div', {class: 'bar', style: {'--v': v, '--h': riskHue(v)}, role: 'img', 'aria-label': `${x.source} 风险 ${v}`}, h('i')),
-        h('b', {class: 'num'}, String(v)), x.detail ? h('span', {class: 'rd'}, x.detail) : null];
-    })) : full && empty('没有来源给出风险评分')),
-    sec('名单命中', lists.length ? h('div', {class: 'lg'}, Object.entries(groups).map(([c, items]) => [
-      tag(KIND[c] || c, HUE[c] ?? null),
-      h('div', {class: 'hits'}, items.map(l => h('span', {class: 'hit', title: l.list},
-        h('b', null, l.label || l.list), mono(l.match), l.detail ? h('span', {class: 'mut'}, l.detail) : null)))])) : empty('未命中任何名单')),
-    sec('DNSBL 黑名单', dnsbl.length ? table(['黑名单', '结果', '返回值'], dnsbl.map(d =>
-      tr([d.zone, d.listed ? '已列入' : d.error ? '查询失败：' + d.error : '未列入', mono(d.answer)],
-        d.listed ? 'bad' : d.error ? 'dim' : null))) : full && empty('没有 DNSBL 查询结果')),
-    sec('开放端口（Shodan InternetDB）', r.ports ? portsView(r.ports) : full && empty('没有端口数据')));
-}
-
-function portsView(p) {
-  const lines = a => a?.length && h('div', {class: 'vlist'}, a.map(x => h('div', {class: 'mono'}, x)));
-  return kv([
-    ['端口', tags(p.ports)],
-    ['主机名', lines(p.hostnames)],
-    ['标签', tags(p.tags)],
-    ['CPE', lines(p.cpes)],
-    ['漏洞', p.vulns?.length && h('div', {class: 'vlist tags'}, p.vulns.map(c => /^CVE-\d{4}-\d{4,}$/i.test(c)
-      ? h('a', {class: 'tag', href: 'https://nvd.nist.gov/vuln/detail/' + c.toUpperCase(), target: '_blank', rel: 'noopener noreferrer'}, c)
-      : tag(c)))],
-  ]) || empty('没有开放端口记录');
-}
-
 let enToCC;
 function ccFromEN(name) {
   if (!enToCC) {
@@ -345,7 +329,6 @@ function ccFromEN(name) {
   const k = String(name || '').toLowerCase().replace(/^the\s+/, '').trim();
   return k ? enToCC[k] || Object.entries(enToCC).find(([n]) => sameCountry(n, k))?.[1] || '' : '';
 }
-const zhName = cc => { try { return zhRegion?.of(cc) || cc; } catch { return cc; } };
 const ver = ip => ip.includes(':') ? 6 : 4;
 function isPublic(ip) {
   if (ver(ip) === 6) return /^[23]/.test(ip);
@@ -439,7 +422,7 @@ function render(r, pending) {
   const parts = r.bogon
     ? [h('section', {class: 'card verdict bogon'}, ipHead(r), h('p', {class: 'v-label'}, '私网或保留地址'), h('p', null, r.bogon))]
     : [verdictCard(r, pending), h('div', {class: 'grid2'}, h('div', {class: 'col'}, geoCard(r.geo || {}), mapCard(r.geo || {})),
-      netCard(r.network || {})), geoSrcCard(r), riskCard(r)];
+      netCard(r.network || {})), geoSrcCard(r), evidenceCard(r.verdict?.evidence)];
   if (conn) { parts.push(conn.el); conn.setResult(r); }
   out.replaceChildren(...parts.filter(Boolean));
   out.classList.remove('stale');

@@ -118,7 +118,12 @@ func (s *Service) finish(o *sources.Out) {
 	}
 	var names []string
 	for _, g := range r.GeoSources {
-		names = append(names, g.ISP, g.Org)
+		// 纯真 and 百度 note what an address is used for (IDC机房, DNS服务器,
+		// 阿里云) next to the operator, which would read as hosting or
+		// residential keywords; their names are shown but not voted on.
+		if g.Source != "纯真 (zxinc)" && g.Source != "百度 IP" {
+			names = append(names, g.ISP, g.Org)
+		}
 		if k := classify.ProviderType(g.Type); k != "" && g.Source != "ipapi.is" && g.Source != "proxycheck.io" &&
 			g.Source != "ipyou.net" && g.Source != "ipinfo.io" {
 			o.Signal(k, g.Source, "type="+g.Type, 40)

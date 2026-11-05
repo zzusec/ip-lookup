@@ -26,9 +26,10 @@ Go 在首屏直接输出 IP，不等待在线评分，页面响应使用 `Cache-
   - 地理库：Merged-IP（合并了 GeoLite2、IPinfo Lite 和 DB-IP）、DB-IP Lite、ip2region。
   - AS 分类：bgp.tools 的 AS 分类和标签。
   - IP 名单：Tor 出口、iCloud 专用代理、VPN 与机房网段、公开代理、各云厂商官方网段、搜索引擎爬虫、Spamhaus DROP、FireHOL、IPsum 等，共 60 多份。
-- **在线接口**：只使用免费额度，每个接口都设了配额、超时和缓存。
+- **在线接口**：使用匿名接口或已配置账户的额度，各接口设有超时和缓存，并按来源限制请求量。
   - 地理与网络类型：ip-api、ipwho.is、ip.sb、ipapi.is、ipinfo、ipapi.co、IP2Location.io、纯真、百度。
   - 风险评估：proxycheck、ipyou、GreyNoise。
+  - 可选 ipdata.co：直接查询目标 IP 的地理、ASN / Company 类型及 Tor、VPN、代理、中继、机房和滥用信号。只有显式安全相关布尔值或合法的 `trust_score` 才计入信誉覆盖，地理查询成功不代表安全；配额耗尽或认证失败在 `sources` 中显示，其他来源继续查询。
   - 开放端口：Shodan InternetDB。
   - 同 IP 域名：HackerTarget。
   - 注册与路由：RDAP、RIPEstat（路由可见度、RPKI、RIR 统计）、PeeringDB。
@@ -48,6 +49,7 @@ Go 在首屏直接输出 IP，不等待在线评分，页面响应使用 `Cache-
 - **原生 / 广播**：比较 RIR 登记国家和地理定位国家，两者一致为原生 IP，不一致为广播 IP。
 - **纯净度**：从 100 分开始扣分，扣分项包括 Tor/代理/VPN、机房、滥用记录、DNSBL 命中和第三方风险分。
   - 分档：≥95 极度纯净，≥80 纯净，≥50 良好，≥25 中性，其余为可疑。
+  - ipdata 的 `threat.scores.trust_score` 越高越可信，以 `100 - trust_score` 转为风险读数：0 对应风险 100，100 对应风险 0，缺失不生成风险读数；不将 VPN / proxy 子分再作为综合风险重复扣分。
 
 评分新增 `score.data_status`（`complete` / `limited` / `unavailable`）与 `score.coverage`（`received` 为有效信誉源数，`total` 为本轮请求涉及的相关信誉源数）。只有实际返回、类型正确的安全相关布尔值或 0–100 风险读数（含 0）才计为有效信誉数据；地理或 ASN 数据、HTTP 200、空事件记录、DNSBL 子查询错误均不当作安全证据。覆盖统计按提供方去重，同一提供方的派生风险不算独立的第二个来源。
 
@@ -84,7 +86,9 @@ install -m 644 deploy/ip-lookup.service /etc/systemd/system/
 systemctl daemon-reload && systemctl enable --now ip-lookup
 ```
 
-服务首次启动时，会在后台用几分钟下载全部数据集。数据还没就绪时也能查询，只是缺少的数据会显示为空。nginx 配置可以参考 `deploy/nginx.conf.example`。环境变量的说明见 `deploy/ip-lookup.env.example`；可选的 API key 填进去后，对应的数据源会改用付费额度。
+服务首次启动时，会在后台用几分钟下载全部数据集。数据还没就绪时也能查询，只是缺少的数据会显示为空。nginx 配置可以参考 `deploy/nginx.conf.example`。环境变量的说明见 `deploy/ip-lookup.env.example`；可选 API key 启用对应账户的额度，是否免费及如何计费以该账户当前方案为准。
+
+ipdata.co 可复用已有账户的 `IPDATA_API_KEY`，仅保存在服务端私有环境文件中；留空时禁用该来源，不发匿名请求。请求仍计入同一账户额度，本进程按精确 IP 缓存 24 小时，并自限每天 100 次上游请求。缓存和用量计数随进程重启清空，不与其他应用协调密钥轮换、缓存或用量，也不是账户全局额度的硬限制。
 
 ## 验证
 

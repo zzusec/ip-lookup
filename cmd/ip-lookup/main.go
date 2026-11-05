@@ -59,7 +59,7 @@ func run(log *slog.Logger) error {
 	}}
 	keys := sources.Keys{IPInfo: os.Getenv("IPINFO_TOKEN"), IPAPIIs: os.Getenv("IPAPIIS_KEY"),
 		ProxyCheck: os.Getenv("PROXYCHECK_KEY"), IP2Location: os.Getenv("IP2LOCATION_KEY"),
-		GreyNoise: os.Getenv("GREYNOISE_KEY")}
+		GreyNoise: os.Getenv("GREYNOISE_KEY"), IPData: strings.TrimSpace(os.Getenv("IPDATA_API_KEY"))}
 	svc := &lookup.Service{
 		Data:    data,
 		Online:  sources.NewSet(&sources.Client{HTTP: httpc, UA: ua}, sources.All(keys)),

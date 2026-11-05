@@ -9,7 +9,7 @@ import (
 // its response for one address includes any reputation evidence.
 func reputationSource(name string) bool {
 	switch name {
-	case "ip-api.com", "ipapi.is", "ipinfo.io", "proxycheck.io", "ipyou.net", "GreyNoise":
+	case "ip-api.com", "ipapi.is", "ipinfo.io", "proxycheck.io", "ipyou.net", "GreyNoise", "ipdata.co":
 		return true
 	default:
 		return false
@@ -39,6 +39,19 @@ func reputationData(name string, raw []byte, addr netip.Addr) bool {
 		intel := reputationObject(top["intel_summary"])
 		return reputationBool(intel, "is_proxy", "is_vpn", "is_tor", "is_bot", "is_hosting", "is_abuser") ||
 			reputationRisk(reputationObject(top["ip_score"])["score"])
+	case "ipdata.co":
+		var address string
+		if json.Unmarshal(top["ip"], &address) != nil {
+			return false
+		}
+		ip, _ := netip.ParseAddr(address)
+		if !ip.IsValid() || ip.Unmap() != addr.Unmap() {
+			return false
+		}
+		threat := reputationObject(top["threat"])
+		return reputationBool(threat, "is_tor", "is_vpn", "is_proxy", "is_icloud_relay", "is_datacenter",
+			"is_known_attacker", "is_known_abuser", "is_threat") ||
+			reputationRisk(reputationObject(threat["scores"])["trust_score"])
 	case "GreyNoise":
 		var riot *bool
 		if json.Unmarshal(top["riot"], &riot) == nil && riot != nil && *riot {

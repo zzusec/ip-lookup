@@ -21,9 +21,10 @@ curl ip.example.com/json/8.8.8.8 # 完整 JSON
 <li>IP 名单：Tor 出口、iCloud 专用代理、VPN 与机房网段、公开代理、各云厂商官方网段、搜索引擎爬虫、Spamhaus DROP、FireHOL、IPsum 等，共 60 多份。</li>
 </ul>
 </li>
-<li><strong>在线接口</strong>：只使用免费额度，每个接口都设了配额、超时和缓存。<ul>
+<li><strong>在线接口</strong>：使用匿名接口或已配置账户的额度，各接口设有超时和缓存，并按来源限制请求量。<ul>
 <li>地理与网络类型：ip-api、ipwho.is、ip.sb、ipapi.is、ipinfo、ipapi.co、IP2Location.io、纯真、百度。</li>
 <li>风险评估：proxycheck、ipyou、GreyNoise。</li>
+<li>可选 ipdata.co：直接查询目标 IP 的地理、ASN / Company 类型及 Tor、VPN、代理、中继、机房和滥用信号。只有显式安全相关布尔值或合法的 <code>trust_score</code> 才计入信誉覆盖，地理查询成功不代表安全；配额耗尽或认证失败在 <code>sources</code> 中显示，其他来源继续查询。</li>
 <li>开放端口：Shodan InternetDB。</li>
 <li>同 IP 域名：HackerTarget。</li>
 <li>注册与路由：RDAP、RIPEstat（路由可见度、RPKI、RIR 统计）、PeeringDB。</li>
@@ -44,6 +45,7 @@ curl ip.example.com/json/8.8.8.8 # 完整 JSON
 <li><strong>原生 / 广播</strong>：比较 RIR 登记国家和地理定位国家，两者一致为原生 IP，不一致为广播 IP。</li>
 <li><strong>纯净度</strong>：从 100 分开始扣分，扣分项包括 Tor/代理/VPN、机房、滥用记录、DNSBL 命中和第三方风险分。<ul>
 <li>分档：≥95 极度纯净，≥80 纯净，≥50 良好，≥25 中性，其余为可疑。</li>
+<li>ipdata 的 <code>threat.scores.trust_score</code> 越高越可信，以 <code>100 - trust_score</code> 转为风险读数：0 对应风险 100，100 对应风险 0，缺失不生成风险读数；不将 VPN / proxy 子分再作为综合风险重复扣分。</li>
 </ul>
 </li>
 </ul>
@@ -91,7 +93,8 @@ install -m 600 deploy/ip-lookup.env.example /etc/ip-lookup.env
 install -m 644 deploy/ip-lookup.service /etc/systemd/system/
 systemctl daemon-reload &amp;&amp; systemctl enable --now ip-lookup
 </code></pre>
-<p>服务首次启动时，会在后台用几分钟下载全部数据集。数据还没就绪时也能查询，只是缺少的数据会显示为空。nginx 配置可以参考 <code>deploy/nginx.conf.example</code>。环境变量的说明见 <code>deploy/ip-lookup.env.example</code>；可选的 API key 填进去后，对应的数据源会改用付费额度。</p>
+<p>服务首次启动时，会在后台用几分钟下载全部数据集。数据还没就绪时也能查询，只是缺少的数据会显示为空。nginx 配置可以参考 <code>deploy/nginx.conf.example</code>。环境变量的说明见 <code>deploy/ip-lookup.env.example</code>；可选 API key 启用对应账户的额度，是否免费及如何计费以该账户当前方案为准。</p>
+<p>ipdata.co 可复用已有账户的 <code>IPDATA_API_KEY</code>，仅保存在服务端私有环境文件中；留空时禁用该来源，不发匿名请求。请求仍计入同一账户额度，本进程按精确 IP 缓存 24 小时，并自限每天 100 次上游请求。缓存和用量计数随进程重启清空，不与其他应用协调密钥轮换、缓存或用量，也不是账户全局额度的硬限制。</p>
 <h2>验证</h2>
 <pre><code class="language-sh">go test ./...
 node --test web/connection.test.cjs

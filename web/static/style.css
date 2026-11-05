@@ -115,6 +115,23 @@ tr.hl td{background:var(--hl)}
 .hints{list-style:none;margin:12px 0 0;padding:0;display:grid;gap:6px}
 .hints:empty{display:none}
 .hints li{padding:8px 12px;border-radius:7px;background:var(--hint);color:var(--hint-ink);font-size:13px}
+.conn-tools{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.btn:disabled{cursor:default;opacity:.6}
+.conn-progress,.conn-env,.conn-note{font-size:12px;margin:8px 0;overflow-wrap:anywhere}
+.conn-note{margin-bottom:0;max-width:90ch}
+.conn-table table{table-layout:fixed}
+.conn-table th,.conn-table td{white-space:normal;overflow-wrap:anywhere}
+.conn-table th:first-child{width:132px}
+.conn-table th:last-child{width:92px}
+.conn-table tbody th{background:var(--card);color:var(--ink)}
+.conn-table td small{display:block;color:var(--mut);font-size:12px;white-space:nowrap}
+.conn-table .ipl{gap:3px 8px}
+.conn-table .ipl+.ipl,.conn-subnet{margin-top:4px}
+.probe-state.ok{color:var(--good)}
+.probe-state.error,.probe-state.unsupported,.probe-state.pending{color:var(--mut)}
+.conn-findings li{display:grid;gap:3px;overflow-wrap:anywhere}
+.conn-findings .finding-info{background:var(--soft);color:var(--ink)}
+.conn-findings strong{font-weight:600}
 .stale{opacity:.45;transition:opacity .2s}
 .foot{padding-top:4px;padding-bottom:32px;font-size:12px;color:var(--mut);overflow-wrap:anywhere}
 .foot p{margin:4px 0}
@@ -128,5 +145,8 @@ tr.hl td{background:var(--hl)}
   .locs .mut{margin-right:8px}
   .card{padding:14px}
   td.wr{min-width:140px}
+  .conn-table th:first-child{width:86px}
+  .conn-table th:last-child{width:74px}
+  .conn-table th,.conn-table td{padding:7px 8px}
 }
 @media (prefers-reduced-motion:reduce){.spin{animation-duration:3s}.stale{transition:none}}

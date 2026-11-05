@@ -315,105 +315,95 @@ function geoSrcCard(r) {
   return card(['多源地理对照', diff ? h('small', null, '高亮行的国家与主结果不一致') : null],
     table(['来源', '国家', '地区', '城市', 'ISP / 组织', 'ASN', '类型'], rows));
 }
-let enToCC;
-function ccFromEN(name) {
-  if (!enToCC) {
-    enToCC = {};
-    for (let i = 0; i < 676; i++) {
-      const c = String.fromCharCode(65 + (i / 26 | 0), 65 + i % 26), n = enName(c);
-      let canon = c;
-      try { canon = Intl.getCanonicalLocales('und-' + c)[0].slice(4); } catch {}
-      if (n && n !== c && canon === c) enToCC[n.toLowerCase()] = c;
-    }
-  }
-  const k = String(name || '').toLowerCase().replace(/^the\s+/, '').trim();
-  return k ? enToCC[k] || Object.entries(enToCC).find(([n]) => sameCountry(n, k))?.[1] || '' : '';
-}
-const ver = ip => ip.includes(':') ? 6 : 4;
-function isPublic(ip) {
-  if (ver(ip) === 6) return /^[23]/.test(ip);
-  const [a, b] = ip.split('.').map(Number);
-  return !(a === 0 || a === 10 || a === 127 || a >= 224 || (a === 100 && b >= 64 && b < 128) || (a === 169 && b === 254)
-    || (a === 172 && b >= 16 && b < 32) || (a === 192 && b === 168) || (a === 198 && (b === 18 || b === 19)));
-}
-// IPv6 addresses from the same /64 count as the same host (privacy addresses rotate).
-function v6net(ip) {
-  const [a, b = ''] = ip.split('::'), A = a ? a.split(':') : [], B = b ? b.split(':') : [];
-  return [...A, ...Array(Math.max(0, 8 - A.length - B.length)).fill('0'), ...B].slice(0, 4).map(x => parseInt(x, 16)).join(':');
-}
-const inSet = (ip, set) => set.includes(ip) || ver(ip) === 6 && set.some(x => ver(x) === 6 && v6net(x) === v6net(ip));
 const ipLine = (ip, ...extra) => h('div', {class: 'ipl'}, mono(ip), extra.filter(Boolean).map(x => h('span', {class: 'mut'}, x)),
   h('a', {class: 'btn sm', href: '/' + ip, 'data-nav': true}, '查询'));
 
-function webrtcIPs() {
-  return new Promise((resolve, reject) => {
-    const found = new Map();
-    let pc;
-    try {
-      pc = new RTCPeerConnection({iceServers: [{urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478']}]});
-    } catch (e) { return reject(e); }
-    const done = () => { clearTimeout(t); try { pc.close(); } catch {} resolve(found); };
-    const t = setTimeout(done, 3000);
-    pc.onicecandidate = e => {
-      if (!e.candidate) return done();
-      const p = e.candidate.candidate.split(' '), type = e.candidate.type || p[7], ip = normIP(e.candidate.address || p[4]);
-      if (ip && (type === 'srflx' || type === 'host') && !found.has(ip)) found.set(ip, type);
-    };
-    pc.createDataChannel('probe');
-    pc.createOffer().then(o => pc.setLocalDescription(o)).catch(done);
-  });
-}
 function connPanel() {
-  const L = [['v4', 'IPv4'], ['v6', 'IPv6'], ['pref', '优先协议'], ['cf', 'Cloudflare 视角'], ['cn', '国内出口'], ['dns', 'DNS 出口'], ['rtc', 'WebRTC']];
-  const rows = {}, res = {}, hints = h('ul', {class: 'hints', 'aria-live': 'polite'});
-  const el = card(['我的连接', h('small', null, '由浏览器直接请求第三方接口检测')],
-    h('dl', {class: 'kv fit'}, L.map(([k, t]) => [h('dt', null, t), rows[k] = h('dd', null, h('span', {class: 'mut'}, '检测中…'))])), hints);
-  let result = null, pending = L.length;
-  const set = (k, ...c) => rows[k].replaceChildren(...c.flat().filter(Boolean));
-  const muted = t => h('span', {class: 'mut'}, t);
-  const j = url => timed(6000, s => getJSON(url, s));
-  const ipOf = o => { const ip = normIP(o?.ip); if (!ip) throw new Error('无效 IP'); return ip; };
-  const probe = (k, fn, show, fail = () => set(k, muted('不可用'))) =>
-    fn().then(v => { res[k] = v; show(v); }, fail).finally(() => { pending--; update(); });
-
-  probe('v4', () => j('https://api4.ipify.org?format=json').then(ipOf), ip => set('v4', ipLine(ip)));
-  probe('v6', () => j('https://api6.ipify.org?format=json').then(ipOf), ip => set('v6', ipLine(ip)), () => set('v6', muted('无 IPv6')));
-  probe('pref', () => j('https://api64.ipify.org?format=json').then(ipOf), ip => set('pref', ipLine(ip, ver(ip) === 6 ? 'IPv6 优先' : 'IPv4 优先')));
-  probe('cf', async () => {
-    const text = await timed(6000, async s => { const r = await fetch('https://1.1.1.1/cdn-cgi/trace', {signal: s}); if (!r.ok) throw new Error(r.status); return r.text(); });
-    const o = {};
-    for (const line of text.split('\n')) { const i = line.indexOf('='); if (i > 0) o[line.slice(0, i)] = line.slice(i + 1).trim(); }
-    o.ip = ipOf(o);
-    return o;
-  }, o => set('cf', ipLine(o.ip, o.loc && ccName(o.loc), o.colo && '节点 ' + o.colo, o.warp && 'WARP ' + o.warp)));
-  probe('cn', async () => {
-    try {
-      const o = await j('https://myip.ipip.net/json');
-      if (o.ret !== 'ok') throw new Error(o.ret);
-      return {ip: ipOf(o.data), loc: (o.data.location || []).filter(x => typeof x === 'string' && x).join(' ')};
-    } catch { return {ip: ipOf(await j('https://api.ipify.cn/?format=json'))}; }
-  }, o => set('cn', ipLine(o.ip, o.loc)));
-  probe('dns', async () => {
-    const o = await j('https://edns.ip-api.com/json'), e = o.edns;
-    return {ip: ipOf(o.dns), geo: String(o.dns.geo || ''), edns: (e && typeof e === 'object' ? [e.ip, e.geo] : [e]).filter(x => typeof x === 'string' && x).join(' ')};
-  }, o => set('dns', ipLine(o.ip, o.geo), o.edns && h('div', {class: 'mut'}, 'EDNS 客户端子网：' + o.edns)));
-  probe('rtc', webrtcIPs, m => set('rtc', m.size ? [...m].map(([ip, t]) => ipLine(ip, t === 'srflx' ? 'STUN 映射地址' : '本机地址')) : muted('未获取到 IP')));
-
-  function update() {
-    if (pending) return;
-    const r = result && !result.bogon ? result : {}, out = [];
-    const foreign = [res.v4, res.v6, res.pref, res.cf?.ip].filter(Boolean), cn = res.cn?.ip;
-    const others = cn ? [...new Set(foreign.filter(x => ver(x) === ver(cn) && !inSet(x, [cn])))] : [];
-    if (others.length) out.push(`分流：国内直连、国外走代理（国内出口 ${cn}，国外出口 ${others.join('、')}）`);
-    const exits = [...foreign, r.ip].filter(Boolean);
-    const leaks = res.rtc && exits.length ? [...res.rtc.keys()].filter(ip => isPublic(ip) && !inSet(ip, exits)) : [];
-    if (leaks.length) out.push(`WebRTC 可能泄露真实 IP：${leaks.join('、')}` + (cn && leaks.some(ip => inSet(ip, [cn])) ? '（与国内直连出口相同）' : ''));
-    const dcc = res.dns?.geo && ccFromEN(res.dns.geo.split(' - ')[0]), icc = (r.geo?.country_code || res.cf?.loc || '').toUpperCase();
-    if (dcc && dcc !== 'ZZ' && /^[A-Z]{2}$/.test(icc) && dcc !== icc)
-      out.push(`DNS 出口位于${zhName(dcc)}，与 IP 所在国家（${zhName(icc)}）不一致，可能存在 DNS 泄露`);
-    hints.replaceChildren(...out.map(t => h('li', null, t)));
+  const body = h('tbody'), hints = h('ul', {class: 'hints conn-findings', 'aria-live': 'polite'});
+  const progress = h('p', {class: 'conn-progress mut', 'aria-live': 'polite'}, '正在检测当前连接…');
+  const env = h('p', {class: 'conn-env mut'});
+  const retry = h('button', {type: 'button', class: 'btn sm', onclick: start}, '重新检测连接');
+  const download = h('button', {type: 'button', class: 'btn sm', onclick: exportReport}, '导出检测报告');
+  download.disabled = true;
+  const el = card(['我的连接', h('small', null, '当前浏览器与网络的实测结果')],
+    h('div', {class: 'conn-tools'}, retry, download), progress,
+    h('div', {class: 'tw conn-table'}, h('table', null,
+      h('thead', null, h('tr', null, ['检测目标', '观测结果', '状态 / 耗时'].map(t => h('th', {scope: 'col'}, t)))), body)),
+    env, hints,
+    h('p', {class: 'conn-note mut'}, '浏览器会直接访问 ipify、Cloudflare、ChatGPT、Claude、IPIP、ip-api、incolumitas 和 STUN 服务。目标站点的出口只反映这次请求，不代表账号可用或服务已解锁。检测结果不改变上方 IP 信誉评分。'));
+  el.id = 'connection';
+  let result = null, snapshot = null, controller = null, round = 0, stopped = false;
+  function probeValue(p) {
+    if (p.status === 'pending') return h('span', {class: 'mut'}, '等待结果…');
+    if (p.status !== 'ok') return h('span', {class: 'mut'}, p.error || '浏览器不支持此项检测');
+    const d = p.data || {};
+    if (p.id === 'rtc') return [
+      d.publicIPs?.length ? d.publicIPs.map(ip => ipLine(ip, '公网候选')) : h('span', {class: 'mut'}, '未取得公网候选，无法据此确认 UDP 路径'),
+      d.localIPs?.map(ip => ipLine(ip, '本地地址')),
+      d.mdns ? h('div', {class: 'mut'}, '本地候选以 mDNS 名称隐藏') : null,
+      d.note ? h('div', {class: 'mut'}, d.note) : null];
+    if (p.id === 'dns') return [ipLine(d.ip, d.country && ccName(d.country), d.org),
+      d.ecs ? h('div', {class: 'conn-subnet'}, d.ecs.prefixUnknown ? 'EDNS 客户端信息：' : 'EDNS 客户端子网：',
+        mono(d.ecs.subnet), d.ecs.country ? ' · ' + ccName(d.ecs.country) : '')
+        : h('div', {class: 'mut'}, d.ecsError ? 'EDNS 字段未能确认：' + d.ecsError : '服务未返回 EDNS 客户端子网')];
+    if (p.id === 'tcp') return [
+      h('div', null, 'SYN 特征最接近 ', h('b', null, d.os || '未知系统'),
+        Number.isFinite(d.score) ? `（匹配分 ${d.score}${Number.isFinite(d.perfectScore) ? '，参考满分 ' + d.perfectScore : ''}）` : ''),
+      ipLine(d.ip, '指纹服务看到的出口'),
+      h('div', {class: 'mut'}, d.uaOS ? '浏览器系统：' + d.uaOS : '接口未返回浏览器系统核对结果'),
+      d.relay == null && d.mismatch == null ? h('div', {class: 'mut'}, '未提供中继或系统一致性判断') : null];
+    return ipLine(d.ip, d.version && 'IPv' + d.version, d.loc && ccName(d.loc), d.location,
+      d.colo && '边缘节点 ' + d.colo, d.warp && 'WARP ' + d.warp, d.http && d.http.replace(/^http\//i, 'HTTP/'), d.tls);
   }
-  return {el, setResult(r) { result = r; update(); }};
+  function update() {
+    if (!snapshot) return;
+    const probes = snapshot.probes || [], done = probes.filter(p => p.status !== 'pending').length;
+    const unavailable = probes.filter(p => p.status === 'error' || p.status === 'unsupported').length;
+    progress.textContent = `${snapshot.finishedAt ? '检测完成' : '检测中'} · ${done} / ${probes.length} 项已返回`
+      + (unavailable ? ` · ${unavailable} 项未能确认` : '') + ' · ' + fmtTime(snapshot.startedAt);
+    body.replaceChildren(...probes.map(p => {
+      const state = p.status === 'ok' && p.data?.timedOut ? '部分返回'
+        : {pending: '检测中', ok: '已返回', error: '未能确认', unsupported: '不支持'}[p.status] || '未知';
+      return h('tr', {'data-probe': p.id}, h('th', {scope: 'row'}, p.label), td(probeValue(p)),
+        td([h('span', {class: 'probe-state ' + p.status}, state), Number.isFinite(p.ms) ? h('small', null, `${p.ms} ms`) : null]));
+    }));
+    const e = snapshot.environment || {};
+    env.textContent = ['浏览器环境', e.timeZone, Number.isFinite(e.offsetMinutes) && 'UTC ' + signed(e.offsetMinutes / 60),
+      e.languages?.join('、')].filter(Boolean).join(' · ');
+    hints.replaceChildren(...IPConnection.analyze(snapshot, result).map(f =>
+      h('li', {class: f.level === 'warn' ? 'finding-warn' : 'finding-info'}, h('strong', null, f.title), h('span', null, f.detail))));
+    download.disabled = false;
+  }
+  function start() {
+    if (stopped) return;
+    controller?.abort();
+    controller = new AbortController();
+    const own = ++round;
+    snapshot = null;
+    download.disabled = true;
+    retry.disabled = true;
+    retry.textContent = '检测中…';
+    body.replaceChildren(); hints.replaceChildren();
+    progress.textContent = '正在检测当前连接…';
+    IPConnection.collect({signal: controller.signal, onUpdate(s) { if (own === round) { snapshot = s; update(); } }})
+      .then(s => { if (own === round) { snapshot = s; update(); } })
+      .catch(e => { if (own === round && e.name !== 'AbortError') progress.textContent = '连接检测失败：' + errText(e); })
+      .finally(() => { if (own === round) { retry.disabled = false; retry.textContent = '重新检测连接'; } });
+  }
+  function exportReport() {
+    if (!snapshot) return;
+    const report = {schema: 'ip-lookup-connection/v1', exportedAt: new Date().toISOString(),
+      ipReport: result, connection: snapshot, findings: IPConnection.analyze(snapshot, result)};
+    const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], {type: 'application/json;charset=utf-8'}));
+    const a = document.createElement('a');
+    a.href = url; a.download = 'ip-lookup-connection-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  start();
+  return {el, setResult(r) { result = r; update(); }, stop() {
+    stopped = true; round++; controller?.abort(); retry.disabled = true; download.disabled = true;
+  }};
 }
 let conn = null, seq = 0, ctl = null;
 function setStatus(cls, ...kids) { statusEl.className = 'status' + (cls ? ' ' + cls : ''); statusEl.replaceChildren(...kids); }
@@ -436,7 +426,7 @@ async function lookup(ip) {
   ctl?.abort(); ctl = c;
   input.value = ip; clearErr();
   document.title = (ip ? ip + ' - ' : '') + 'IP 类型查询';
-  conn = null;
+  conn?.stop(); conn = null;
   const run = (mode, ms) => timed(ms, s => getJSON('/api/lookup?' + new URLSearchParams(ip ? {ip, mode} : {mode}), s), c.signal);
   out.classList.add('stale');
   setStatus('', spinner(), '正在查询…');

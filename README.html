@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ip-lookup · 项目说明</title>
+<style>html{color-scheme:light}body{max-width:900px;margin:36px auto;padding:0 24px;color:#14212a;background:#fff;font:16px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;overflow-wrap:anywhere}h1,h2,h3{line-height:1.3;margin:1.6em 0 .6em}h1{margin-top:0}h2{font-size:1.4rem;border-bottom:1px solid #d8e0e5;padding-bottom:.35em}a{color:#0a6e8a}pre{padding:16px;background:#f3f6f8;border:1px solid #d8e0e5;border-radius:6px;overflow:auto}code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9em}p code,li code,td code{background:#f3f6f8;padding:1px 4px}table{border-collapse:collapse;display:block;max-width:100%;overflow:auto;font-size:.9rem}th,td{padding:8px 12px;border:1px solid #d8e0e5;text-align:left}th{background:#f3f6f8}li+li{margin-top:6px}@media(max-width:600px){body{margin:20px auto;padding:0 16px;font-size:15px}pre{white-space:pre-wrap;overflow-wrap:anywhere}}@media print{body{max-width:none;margin:0;padding:0;font-size:10.5pt;color:#000}a{color:inherit}pre{white-space:pre-wrap}table{display:table;overflow:visible}h2,h3{break-after:avoid}tr,pre{break-inside:avoid}@page{margin:18mm}}</style></head><body>
+<h1>ip-lookup</h1>
+<p>查询 IP 的类型（家宽 / 移动 / 机房 / CDN / 教育 / 企业 / 政府）、用途标记（Tor、VPN、代理、iCloud 专用代理、爬虫、公共服务、任播）、原生或广播、纯净度评分，以及地理位置、ASN、路由、注册信息等基础资料。</p>
+<p>在线体验：<a href="https://ip.llkan.com">https://ip.llkan.com</a></p>
+<pre><code>curl ip.llkan.com              # 查询自己的出口 IP，纯文本
+curl ip.llkan.com/8.8.8.8      # 查询指定 IP
+curl ip.llkan.com/json/8.8.8.8 # 完整 JSON
+</code></pre>
+<h2>工作方式</h2>
+<p>每次查询会汇总三类数据，再由打分规则得出结论。网页第一屏是摘要：ASN、IP 范围、几个主要数据库各自的定位、原生或广播、类型和用途；下面是地理与网络详情、地图、多源地理对照和每一条判定依据。风险评分、名单命中、DNSBL 和开放端口照常参与纯净度计分，但页面上不展示，只在 API 结果和 curl 纯文本里提供；各数据源的响应状态和耗时只在 API 结果的 <code>sources</code> 字段里。</p>
+<ul>
+<li><strong>离线数据</strong>：服务端每天检查一次更新（带 ETag 的条件请求，没变就不重新下载），查询时直接读取本地文件，耗时在毫秒级。<ul>
+<li>地理库：Merged-IP（合并了 GeoLite2、IPinfo Lite 和 DB-IP）、DB-IP Lite、ip2region。</li>
+<li>AS 分类：bgp.tools 的 AS 分类和标签。</li>
+<li>IP 名单：Tor 出口、iCloud 专用代理、VPN 与机房网段、公开代理、各云厂商官方网段、搜索引擎爬虫、Spamhaus DROP、FireHOL、IPsum 等，共 60 多份。</li>
+</ul>
+</li>
+<li><strong>在线接口</strong>：只使用免费额度，每个接口都设了配额、超时和缓存。<ul>
+<li>地理与网络类型：ip-api、ipwho.is、ip.sb、ipapi.is、ipinfo、ipapi.co、IP2Location.io、纯真、百度。</li>
+<li>风险评估：proxycheck、ipyou、GreyNoise。</li>
+<li>开放端口：Shodan InternetDB。</li>
+<li>同 IP 域名：HackerTarget。</li>
+<li>注册与路由：RDAP、RIPEstat（路由可见度、RPKI、RIR 统计）、PeeringDB。</li>
+</ul>
+</li>
+<li><strong>DNS 查询</strong>：反向解析并做正反解校验（FCrDNS），通过 Team Cymru 查 ASN，另查 12 个 DNSBL 黑名单。</li>
+</ul>
+<p>页面打开时，浏览器还会通过 ipify、Cloudflare trace、WebRTC 等方式探测访客的其他出口地址，并检测 DNS 出口。</p>
+<h2>我的连接</h2>
+<p>首页或点击“查我的 IP”时，浏览器会并行实测当前网络；查询指定 IP 时不运行这些探测，避免把访客的网络环境算到别人的 IP 上。连接结果独立于 IP 资料和纯净度评分：</p>
+<ul>
+<li><strong>目标站点出口对照</strong>：本站、ipify IPv4 / IPv6 / 双栈、Cloudflare、ChatGPT、Claude 与国内目标分别看到的地址。相同地址族内出现多个出口时，提示按目标分流、多出口或负载均衡的可能；收到 trace 不代表账号可用、地区支持或服务已解锁。</li>
+<li><strong>DNS 与 EDNS 客户端子网</strong>：每轮使用安全随机的 128 bit 子域名请求 ip-api EDNS 接口，减少已有 DNS 缓存的影响；单独展示解析器和接口实际返回的 ECS 子网。若只返回地址而没有前缀长度，就保留原值并提示覆盖范围未知；ECS 字段异常也不会抹去有效的解析器观测。公共解析器跨国、Anycast 或定位误差本身不足以确认泄露，未返回 ECS 也不代表所有解析请求都不会携带 ECS。</li>
+<li><strong>WebRTC / STUN</strong>：区分公网候选、本地地址和 mDNS 隐藏。只与同地址族的网页出口比较；IPv6 同 <code>/64</code> 仅表示前缀相同，不当成同一地址。没有候选或探测失败时保留未知状态；到达时限而只获得部分候选时明确标注“部分返回”。</li>
+<li><strong>TCP 系统指纹</strong>：浏览器直连 incolumitas，展示第三方推断的 SYN 系统特征、原始匹配分，以及它实际看到的出口。仅在出口与本轮网页观测一致时解释中继或系统差异；系统差异是线索，不能单独证明代理或泄露。匹配分不是概率。</li>
+<li><strong>浏览器环境与检测记录</strong>：显示本地时区、UTC 偏移和语言；每项保留状态、耗时和错误。支持重新检测及在浏览器本地导出包含原始观测与判定依据的 JSON 报告。切换查询会取消旧一轮请求并关闭 WebRTC 连接。</li>
+</ul>
+<p>这些探测会直接联系页面列出的第三方，因此各服务会看到访客访问它们时的出口 IP。跨域限制、挑战页、浏览器扩展、超时和目标故障均按“未能确认”展示，不当作“无 IPv6”或“网络安全”。耗时包含第三方服务处理时间，不是链路 ping 延迟。</p>
+<p>整合思路参考 <a href="https://github.com/BlackSlience-Reaper/egress-observatory">egress-observatory</a> 的多目标观测、连接证据与 IP 信誉分离，以及 <a href="https://github.com/zzusec/whoprobe">whoprobe</a> 的目标站点矩阵、随机 DNS 与 WebRTC 状态区分。代码在本项目独立实现。没有引入需要 <code>CAP_NET_RAW</code> 的抓包服务，也没有将反向代理的 TLS 握手冒充访客指纹；验证码和账号可用性不在本轮探测范围。</p>
+<h2>判定规则</h2>
+<ul>
+<li><strong>类型</strong>：每个数据源给出带权重的证据，同一数据源对同一结论只计一次，按总分最高者定类型。<ul>
+<li>CDN 节点在多数数据源里被标成机房，所以 CDN 先和机房合并比较，胜出后再按 CDN 证据细分。</li>
+</ul>
+</li>
+<li><strong>用途标记</strong>：一个强证据（例如命中 Tor 官方出口列表），或两个互相印证的中等证据，就会打上标记。</li>
+<li><strong>原生 / 广播</strong>：比较 RIR 登记国家和地理定位国家，两者一致为原生 IP，不一致为广播 IP。</li>
+<li><strong>纯净度</strong>：从 100 分开始扣分，扣分项包括 Tor/代理/VPN、机房、滥用记录、DNSBL 命中和第三方风险分。<ul>
+<li>分档：≥95 极度纯净，≥80 纯净，≥50 良好，≥25 中性，其余为可疑。</li>
+</ul>
+</li>
+</ul>
+<p>这些结论来自公开数据的统计推断，只能作为参考。各数据源本身也有误判，页面会列出类型判定的全部依据，其余原始数据可从 API 获取，便于自行核对。</p>
+<h2>API</h2>
+<table>
+<thead>
+<tr>
+<th>路径</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>GET /api/lookup?ip=&amp;mode=full|fast</code></td>
+<td>不传 <code>ip</code> 时查询访客自己。<code>fast</code> 只用离线数据（&lt;50ms），<code>full</code> 会加上在线接口和 DNS（最长约 10 秒）</td>
+</tr>
+<tr>
+<td><code>GET /json</code>、<code>GET /json/{ip}</code></td>
+<td>等同于 <code>mode=full</code></td>
+</tr>
+<tr>
+<td><code>GET /api/ip</code></td>
+<td>返回访客 IP</td>
+</tr>
+<tr>
+<td><code>GET /api/sources</code></td>
+<td>返回各数据集的条目数、更新时间，以及在线接口的配额使用情况</td>
+</tr>
+<tr>
+<td><code>GET /</code>、<code>GET /{ip}</code></td>
+<td>浏览器访问返回网页，curl、wget、HTTPie 返回纯文本</td>
+</tr>
+</tbody></table>
+<p>查询别人的 IP 时，每个客户端（IPv6 按 /64 计）每分钟最多 20 次 full 查询。查询自己不受这个限制。</p>
+<h2>部署</h2>
+<p>需要 Go 1.27 以上。离线数据约 320MB，放在 <code>DATA_DIR</code> 里，运行时内存大约 50 到 150MB。</p>
+<pre><code class="language-sh">GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags &quot;-s -w&quot; -o ip-lookup ./cmd/ip-lookup
+useradd --system --no-create-home --shell /usr/sbin/nologin iplookup
+install -D -m 755 ip-lookup /opt/ip-lookup/ip-lookup
+install -m 600 deploy/ip-lookup.env.example /etc/ip-lookup.env
+install -m 644 deploy/ip-lookup.service /etc/systemd/system/
+systemctl daemon-reload &amp;&amp; systemctl enable --now ip-lookup
+</code></pre>
+<p>服务首次启动时，会在后台用几分钟下载全部数据集。数据还没就绪时也能查询，只是缺少的数据会显示为空。nginx 配置可以参考 <code>deploy/nginx.conf.example</code>。环境变量的说明见 <code>deploy/ip-lookup.env.example</code>；可选的 API key 填进去后，对应的数据源会改用付费额度。</p>
+<h2>验证</h2>
+<pre><code class="language-sh">go test ./...
+node --test web/connection.test.cjs
+node --test web/connection.ui.test.cjs
+</code></pre>
+<p>浏览器测试需要已安装的 Playwright 与 Chromium；支持通过 <code>CHROMIUM_PATH</code> 指定浏览器，不自动下载依赖。测试使用合成数据拦截所有第三方请求，覆盖自查与指定 IP 的隔离、重新检测、导航取消、报告导出及 393px 手机布局。接口真实可达性由访客本轮结果反映，不由测试夹具保证。</p>
+<h2>数据来源与许可</h2>
+<p>本项目代码采用 MIT 许可。数据不随代码分发，由服务端从各来源下载，使用时请遵守原始许可：</p>
+<ul>
+<li>GeoLite2、IPinfo Lite（经 Merged-IP 合并）：CC BY-SA 4.0。DB-IP Lite：CC BY 4.0，页面已按要求署名。</li>
+<li>ip2region：Apache-2.0。lord-alfred/ipranges：CC0。axpwx/IP-Data、monosans/proxy-list：MIT。stamparm/ipsum：Unlicense。proxifly/free-proxy-list：GPL-3.0。</li>
+<li>X4BNet/lists_vpn、FireHOL、bgp.tools、Spamhaus DROP、各云厂商网段：按各自网站的使用条款。</li>
+<li>地图：Leaflet 1.9.4（BSD-2-Clause，随代码放在 <code>web/static/vendor/leaflet/</code>），底图来自 OpenStreetMap（ODbL），页面带有署名。</li>
+<li>ip-api.com 的免费接口仅限非商业用途，商业部署需要购买它的 Pro 版，或者从 <code>internal/sources/all.go</code> 中移除这个数据源。</li>
+</ul>
+
+</body></html>

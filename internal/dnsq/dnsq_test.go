@@ -9,7 +9,7 @@ import (
 
 func TestReversed(t *testing.T) {
 	for in, want := range map[string]string{
-		"69.63.223.19":         "19.223.63.69",
+		"192.0.2.7":            "7.2.0.192",
 		"::ffff:1.2.3.4":       "4.3.2.1",
 		"2001:4860:4860::8888": "8.8.8.8.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.6.8.4.0.6.8.4.1.0.0.2",
 	} {
@@ -44,7 +44,7 @@ func TestLive(t *testing.T) {
 	}
 	r := New([]string{"1.1.1.1:53", "8.8.8.8:53"})
 	ctx := context.Background()
-	for _, ip := range []string{"69.63.223.19", "2001:4860:4860::8888", "127.0.0.2"} {
+	for _, ip := range []string{"9.9.9.9", "2001:4860:4860::8888", "127.0.0.2"} {
 		a := netip.MustParseAddr(ip)
 		names, fc, err := r.Reverse(ctx, a)
 		o, oerr := r.Cymru(ctx, a)

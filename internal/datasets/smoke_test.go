@@ -15,7 +15,7 @@ func TestSmokeCached(t *testing.T) {
 	}
 	m := NewManager(dir, "test", slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	m.LoadCached()
-	for _, ip := range []string{"69.63.223.19", "183.192.65.101", "24.48.0.1", "8.8.8.8", "2001:4860:4860::8888", "1.1.1.1"} {
+	for _, ip := range []string{"9.9.9.9", "183.192.65.101", "24.48.0.1", "8.8.8.8", "2001:4860:4860::8888", "1.1.1.1"} {
 		a := netip.MustParseAddr(ip)
 		var r MergedRecord
 		p, ok, err := m.LookupMMDB("merged", a, &r)

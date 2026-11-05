@@ -2,12 +2,12 @@
 
 查询 IP 的类型（家宽 / 移动 / 机房 / CDN / 教育 / 企业 / 政府）、用途标记（Tor、VPN、代理、iCloud 专用代理、爬虫、公共服务、任播）、原生或广播、纯净度评分，以及地理位置、ASN、路由、注册信息等基础资料。
 
-在线体验：<https://ip.llkan.com>
+部署后通过自己的域名访问；以下命令以 `ip.example.com` 为例。
 
 ```
-curl ip.llkan.com              # 查询自己的出口 IP，纯文本
-curl ip.llkan.com/8.8.8.8      # 查询指定 IP
-curl ip.llkan.com/json/8.8.8.8 # 完整 JSON
+curl ip.example.com              # 查询自己的出口 IP，纯文本
+curl ip.example.com/8.8.8.8      # 查询指定 IP
+curl ip.example.com/json/8.8.8.8 # 完整 JSON
 ```
 
 ## 工作方式

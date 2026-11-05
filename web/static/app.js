@@ -1,494 +1,140 @@
 'use strict';
-const $ = s => document.querySelector(s);
-const out = $('#out'), statusEl = $('#status'), form = $('#q'), input = $('#qi'), qerr = $('#qerr');
-
-const KIND = {residential: '家庭宽带', mobile: '移动网络', hosting: '机房', cdn: 'CDN', business: '企业', education: '教育网', government: '政府', unknown: '未知',
-  tor: 'Tor 出口', vpn: 'VPN', proxy: '代理', icloud_relay: 'iCloud 专用代理', crawler: '爬虫', public_service: '公共服务', abuser: '滥用记录', abuse: '滥用记录',
-  anycast: '任播', satellite: '卫星网络', org: '知名机构', as_tag: 'AS 标签'};
-const HUE = {residential: 150, mobile: 195, hosting: 28, cdn: 265, business: 215, education: 175, government: 330,
-  tor: 4, vpn: 4, proxy: 4, abuser: 4, abuse: 4, crawler: 45, icloud_relay: 210, public_service: 190, anycast: 240, satellite: 280, org: 215};
-const CONF = {high: ['高', 3], medium: ['中', 2], low: ['低', 1]};
+const $ = selector => document.querySelector(selector);
+const address = $('#ipAddress'), label = $('#ipLabel'), result = $('#result'), score = $('#score');
+const value = $('#scoreValue'), level = $('#scoreLevel'), total = $('#scoreTotal'), statusEl = $('#status');
+const form = $('#q'), input = $('#qi'), qerr = $('#qerr'), copyButton = $('#copy');
 const V4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
-let zhRegion, enRegion;
-try { zhRegion = new Intl.DisplayNames(['zh-CN'], {type: 'region', style: 'short'}); enRegion = new Intl.DisplayNames(['en'], {type: 'region'}); } catch {}
-
-// All API strings reach the DOM through createElement/append (text nodes), never innerHTML.
-function h(tag, attrs, ...kids) {
-  const el = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs || {})) {
-    if (v == null || v === false) continue;
-    if (k === 'class') el.className = v;
-    else if (k === 'style') for (const p in v) el.style.setProperty(p, v[p]);
-    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
-    else if (k === 'href') { const u = safeURL(v); if (u) el.setAttribute('href', u); }
-    else el.setAttribute(k, v === true ? '' : v);
+function normIP(raw) {
+  const ip = String(raw || '').trim().replace(/^\[(.*)\]$/, '$1');
+  if (V4.test(ip)) return ip;
+  if (!ip.includes(':') || !/^[0-9a-f:.]+$/i.test(ip)) return '';
+  if (ip.includes('.') && !/:(\d+\.){3}\d+$/.test(ip)) return '';
+  const halves = ip.split('::');
+  if (halves.length > 2) return '';
+  const groups = halves.flatMap(p => p ? p.split(':') : []);
+  let count = groups.length;
+  if (groups[count - 1]?.includes('.')) {
+    if (!V4.test(groups.pop())) return '';
+    count++;
   }
-  for (const c of kids.flat(9)) if (c != null && c !== false && c !== '') el.append(c);
-  return el;
+  if (!groups.every(g => /^[0-9a-f]{1,4}$/i.test(g))) return '';
+  return (halves.length === 2 ? count <= 7 : count === 8) ? ip.toLowerCase() : '';
 }
-// Only same-site IP paths and absolute http(s) URLs become links.
-function safeURL(v) {
-  v = String(v);
-  if (/^\/[0-9A-Za-z.:]*$/.test(v)) return v;
-  try { const u = new URL(v); return u.protocol === 'http:' || u.protocol === 'https:' ? u.href : null; } catch { return null; }
+let currentIP = normIP(address.textContent), sequence = 0, controller, loading = false;
+function showIP(ip) {
+  currentIP = normIP(ip);
+  address.replaceChildren();
+  if (currentIP) {
+    for (const part of currentIP.match(/[^:]+:*|:+/g)) {
+      address.append(part);
+      address.append(document.createElement('wbr'));
+    }
+  } else address.textContent = '获取中…';
+  copyButton.disabled = !currentIP;
+  copyButton.textContent = '复制';
 }
-const ext = (href, text = href) => safeURL(href) ? h('a', {href, target: '_blank', rel: 'noopener noreferrer'}, text) : text;
-const has = v => Array.isArray(v) ? v.some(has) : typeof v === 'string' ? v.trim() !== '' : v != null && v !== false && v !== 0;
-const clamp = v => Math.max(0, Math.min(100, Number(v) || 0));
-const signed = n => (n > 0 ? '+' : '') + n;
-const scoreHue = v => v >= 95 ? 152 : v >= 80 ? 140 : v >= 50 ? 85 : v >= 25 ? 38 : 4;
-const mono = v => has(v) ? h('span', {class: 'mono'}, v) : null;
-const tag = (text, hue) => h('span', {class: hue == null ? 'tag' : 'tag hue', style: hue == null ? null : {'--h': hue}}, text);
-const tags = (arr, fn = x => tag(String(x))) => arr?.length ? h('div', {class: 'tags'}, arr.map(fn)) : null;
-const flag = cc => /^[a-z]{2}$/i.test(cc || '') ? String.fromCodePoint(...[...cc.toUpperCase()].map(c => 127397 + c.charCodeAt(0))) : '';
-function ccName(c) {
-  if (!/^[a-z]{2}$/i.test(c || '')) return c || '';
-  c = c.toUpperCase();
-  let n = '';
-  try { n = zhRegion?.of(c) || ''; } catch {}
-  return `${flag(c)} ${n && n !== c ? n + ' ' : ''}${c}`;
-}
-const enName = cc => { try { return /^[a-z]{2}$/i.test(cc || '') && enRegion?.of(cc.toUpperCase()) || ''; } catch { return ''; } };
-const zhName = cc => { try { return zhRegion?.of(cc) || cc; } catch { return cc; } };
-// One spelling per country, flag and Chinese name, whatever language the source answered in.
-const countryOf = s => /^[a-z]{2}$/i.test(s.country_code || '') ? `${flag(s.country_code)} ${zhName(s.country_code.toUpperCase())}` : s.country || '';
-const bi = (zh, en, code) => (zh || en) ? (zh || en) + (zh && en && en !== zh ? ' ' + en : '') + (code ? `（${code}）` : '') : code || '';
-const fmtTime = s => { const d = new Date(s); return isNaN(d) ? s : d.toLocaleString('zh-CN', {dateStyle: 'short', timeStyle: 'short'}); };
-
-function isV6(s) {
-  if (!s.includes(':') || !/^[0-9a-f:.]+$/i.test(s)) return false;
-  if (s.includes('.') && !/:(\d+\.){3}\d+$/.test(s)) return false;
-  const halves = s.split('::');
-  if (halves.length > 2) return false;
-  let groups = halves.flatMap(p => p ? p.split(':') : []), n = groups.length;
-  if (groups[n - 1]?.includes('.')) { if (!V4.test(groups.pop())) return false; n++; }
-  if (!groups.every(g => /^[0-9a-f]{1,4}$/i.test(g))) return false;
-  return halves.length === 2 ? n <= 7 : n === 8;
-}
-function normIP(s) {
-  s = String(s || '').trim().replace(/^\[(.*)\]$/, '$1').replace(/^([0-9a-f:.]*:[0-9a-f:.]*)%[\w.-]+$/i, '$1');
-  return V4.test(s) ? s : isV6(s) ? s.toLowerCase() : '';
-}
-
-const kv = rows => {
-  rows = rows.filter(r => r && has(r[1]));
-  return rows.length ? h('dl', {class: 'kv'}, rows.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])) : null;
-};
-const td = (c, cls) => h('td', {class: cls}, c);
-const tr = (cells, cls) => h('tr', {class: cls}, cells.map(c => c?.tagName === 'TD' ? c : td(c)));
-const table = (head, rows) => h('div', {class: 'tw'}, h('table', null,
-  h('thead', null, h('tr', null, head.map(x => x?.tagName === 'TH' ? x : h('th', null, x)))), h('tbody', null, rows)));
-const card = (title, ...kids) => h('section', {class: 'card'}, h('h2', null, title), kids);
-const empty = text => h('p', {class: 'empty'}, text);
-const spinner = () => h('span', {class: 'spin', 'aria-hidden': 'true'});
-
-// Runs fn(signal) with its own timeout; also aborts when parent aborts.
-async function timed(ms, fn, parent) {
-  const c = new AbortController(), stop = () => c.abort();
-  const t = setTimeout(stop, ms);
-  parent?.addEventListener('abort', stop);
-  try { return await fn(c.signal); } finally { clearTimeout(t); parent?.removeEventListener('abort', stop); }
-}
-async function getJSON(url, signal) {
-  const r = await fetch(url, {signal, headers: {accept: 'application/json'}});
-  let body = null;
-  try { body = await r.json(); } catch {}
-  if (!r.ok) {
-    const e = new Error(body?.error || `HTTP ${r.status}`);
-    e.status = r.status;
-    e.retry = body?.retry_after || Number(r.headers.get('retry-after')) || 0;
-    throw e;
-  }
-  if (!body) throw new Error('响应不是有效的 JSON');
-  return body;
-}
-const errText = e => e.name === 'AbortError' ? '请求超时'
-  : e.status === 429 ? '查询太频繁，' + (e.retry ? `请 ${e.retry} 秒后再试` : '请稍后再试')
-  : e instanceof TypeError ? '无法连接服务器' : e.message;
-const LEVEL = v => v >= 95 ? '极度纯净' : v >= 80 ? '纯净' : v >= 50 ? '良好' : v >= 25 ? '中性' : '可疑';
-
-async function copy(text, btn) {
-  let ok = false;
-  try { await navigator.clipboard.writeText(text); ok = true; } catch {
-    const ta = h('textarea', {style: {position: 'fixed', opacity: '0'}});
-    ta.value = text; document.body.append(ta); ta.select();
-    try { ok = document.execCommand('copy'); } catch {}
-    ta.remove();
-  }
-  btn.textContent = ok ? '已复制' : '复制失败';
-  setTimeout(() => { btn.textContent = '复制'; }, 1500);
-}
-const ipHead = r => h('div', {class: 'v-ip'}, mono(r.ip),
-  h('button', {type: 'button', class: 'btn sm', onclick: e => copy(r.ip, e.currentTarget)}, '复制'),
-  r.version ? tag('IPv' + r.version) : null);
-
-function verdictCard(r, pending) {
-  const v = r.verdict || {}, conf = CONF[v.confidence], hue = HUE[v.type], n = r.network || {};
-  return h('section', {class: hue == null ? 'card verdict' : 'card verdict hue', style: hue == null ? null : {'--h': hue}},
-    h('div', null,
-      ipHead(r),
-      h('p', {class: 'v-label'}, v.label || v.type_label || '未知'),
-      kv([
-        ['ASN', n.asn && [ext('https://bgp.tools/as/' + n.asn, 'AS' + n.asn), n.as_name ? ' – ' + n.as_name : '']],
-        ['AS 域名', n.as_domain],
-        ['IP 范围', mono(n.net_range || n.bgp_prefix || n.prefix)],
-        ['位置', places(r)],
-        ['IP 来源', nativeLine(r.native || {})],
-        ['IP 属性', h('div', {class: 'tags'},
-          v.type_label ? tag(v.type_label, hue) : null,
-          (v.usage_labels || []).map((l, i) => tag(l, HUE[v.usage?.[i]] ?? 4)),
-          conf ? h('span', {class: 'conf c' + conf[1]}, '置信度', h('i'), h('i'), h('i'), ' ' + conf[0]) : null)],
-      ]),
-      h('p', {class: 'meta'},
-        h('span', null, r.mode === 'full' ? '完整查询' : '快速查询（仅离线库）'),
-        r.queried_at ? h('span', null, '查询于 ' + fmtTime(r.queried_at)) : null,
-        r.elapsed_ms != null ? h('span', null, `耗时 ${r.elapsed_ms} ms`) : null)),
-    scoreBox(r.score || {}, pending ? 'pending' : r.mode === 'fast' ? 'offline' : ''));
-}
-
-// Where the main databases place the address, one line each; ip2region only
-// for China, where it is the most precise and elsewhere often vague.
-const PLACE_SRC = ['Merged-IP', 'ip2region', 'DB-IP City Lite', 'IP2Location.io', 'ipinfo.io', 'ip-api.com'];
-function places(r) {
-  const list = r.geo_sources || [], cn = (r.geo?.country_code || '').toUpperCase() === 'CN';
-  const rows = PLACE_SRC.filter(n => cn || n !== 'ip2region').map(n => list.find(s => s.source === n))
-    .filter(s => s && has([s.country, s.country_code]));
-  return rows.length ? h('div', {class: 'locs'}, rows.map(s => h('div', null, h('span', {class: 'mut'}, s.source),
-    h('span', null, [countryOf(s), s.region, s.city !== s.region && s.city].filter(has).join(', '))))) : null;
-}
-
-// state is 'pending' while the full lookup runs, so no number is shown that
-// the online checks would change, and 'offline' when only the offline
-// databases answered.
-function scoreBox(s, state) {
-  if (state === 'pending') return h('div', {class: 'score'},
-    h('div', {class: 'ring wait', style: {'--v': 0, '--h': 200}, role: 'img', 'aria-label': '纯净度评估中'}, spinner(), h('span', null, '评估中')),
-    h('span', {class: 'mut'}, '等待在线数据源和 DNS'));
-  const v = clamp(s.value), level = s.level || LEVEL(v);
-  return h('div', {class: 'score'},
-    h('div', {class: 'ring', style: {'--v': v, '--h': scoreHue(v)}, role: 'img', 'aria-label': `纯净度 ${v} 分，${level}`},
-      h('b', null, String(v)), h('span', null, level)),
-    h('span', {class: 'mut'}, state === 'offline' ? '仅依据离线库，未含在线风险检查' : '纯净度（满分 100）'),
-    s.factors?.length ? h('ul', {class: 'factors'}, s.factors.map(f => h('li', null, h('span', null, f.name),
-      h('b', {class: f.delta > 0 ? 'pos' : f.delta < 0 ? 'neg' : 'mut'}, signed(f.delta))))) : null);
-}
-
-function nativeLine(n) {
-  const reg = n.registered_country, geo = n.geo_country;
-  if (!has([n.label, reg, geo])) return null;
-  const diff = reg && geo && reg.toUpperCase() !== geo.toUpperCase() ? 'diff' : null;
-  return h('div', {class: 'tags'},
-    tag(n.label || '未知', {native: 150, broadcast: 28}[n.status] ?? null),
-    reg || geo ? h('span', {class: 'cmp'},
-      h('span', null, '注册国 ', h('b', {class: diff}, ccName(reg) || '未知')),
-      h('span', null, '定位国 ', h('b', {class: diff}, ccName(geo) || '未知'))) : null,
-    n.registry ? h('span', {class: 'mut'}, n.registry) : null,
-    n.status === 'unknown' && n.detail ? h('span', {class: 'mut'}, n.detail) : null);
-}
-
-function evidenceCard(ev) {
-  if (!ev?.length) return null;
-  return card('判定依据',
-    table(['依据', h('th', {class: 'num'}, '权重'), '来源', '说明'], ev.map(e => tr([
-      tag(KIND[e.kind] || e.kind, HUE[e.kind] ?? null), td(h('span', {class: e.weight < 0 ? 'w n' : 'w'}, signed(e.weight)), 'num'),
-      e.source, td(e.detail, 'wr')]))));
-}
-function geoCard(g) {
-  const lat = Number(g.lat) || 0, lon = Number(g.lon) || 0;
-  return card('地理位置', kv([
-    ['洲', bi(g.continent, '', g.continent_code)],
-    ['国家', has([g.country, g.country_en, g.country_code]) && `${g.flag || flag(g.country_code)} ${bi(g.country, g.country_en, g.country_code)}`.trim()],
-    ['地区', bi(g.region, g.region_en, g.region_code)],
-    ['城市', bi(g.city, g.city_en)],
-    ['区县', g.district],
-    ['邮编', g.postal],
-    ['经纬度', (lat || lon) && ext(`https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=10/${lat}/${lon}`, `${lat}, ${lon}`)],
-    ['精度', g.accuracy_km && `约 ${g.accuracy_km} km`],
-    ['时区', g.time_zone],
-    ['UTC 偏移', g.utc_offset],
-    ['货币', g.currency],
-    ['电话区号', g.calling_code],
-    ['欧盟成员', g.is_eu && '是'],
-  ]) || empty('没有地理信息'));
-}
-
-// The map card is kept while the location stays the same, so the full result
-// replacing the fast one does not reload the map.
-let mapView = null, leaflet = null;
-function mapCard(g) {
-  const lat = Number(g.lat), lon = Number(g.lon), acc = Number(g.accuracy_km) || 0, key = [lat, lon, acc].join();
-  if (!(Math.abs(lat) <= 90 && Math.abs(lon) <= 180) || !lat && !lon) return dropMap();
-  if (mapView?.key !== key) {
-    dropMap();
-    const box = h('div', {class: 'map'});
-    mapView = {key, lat, lon, acc, box, el: h('section', {class: 'card mapcard'},
-      h('h2', null, '位置地图', acc ? h('small', null, `圆圈为约 ${acc} km 的定位精度`) : null), box)};
-  }
-  return mapView.el;
-}
-function dropMap() { mapView?.map?.remove(); mapView = null; return null; }
-
-// Leaflet is fetched only when a map is shown, after the results are on screen.
-function loadLeaflet() {
-  const load = (tag, props) => new Promise((resolve, reject) => document.head.append(Object.assign(document.createElement(tag), props,
-    {onload: resolve, onerror: () => reject(new Error('无法下载地图组件'))})));
-  return leaflet ||= Promise.all([load('link', {rel: 'stylesheet', href: '/static/vendor/leaflet/leaflet.css?v=1.9.4'}),
-    load('script', {src: '/static/vendor/leaflet/leaflet.js?v=1.9.4'})])
-    .then(() => window.L || Promise.reject(new Error('地图组件无效')), e => { leaflet = null; throw e; });
-}
-async function mountMap() {
-  const v = mapView;
-  if (!v?.el.isConnected || v.loading) return;
-  if (v.map) return void v.map.invalidateSize();
-  v.loading = true;
+async function getJSON(url, parent, ms = 25000) {
+  if (parent.aborted) throw new DOMException('查询已取消', 'AbortError');
+  const c = new AbortController(), abort = () => c.abort();
+  const timer = setTimeout(abort, ms);
+  parent.addEventListener('abort', abort, {once: true});
   try {
-    const L = await loadLeaflet();
-    if (v !== mapView || !v.el.isConnected) return;
-    const at = [v.lat, v.lon], color = getComputedStyle(v.box).getPropertyValue('--acc').trim() || '#0a6e8a';
-    v.box.replaceChildren();
-    const m = v.map = L.map(v.box, {scrollWheelZoom: false, dragging: !L.Browser.mobile});
-    if (v.acc) {
-      m.fitBounds(L.latLng(at).toBounds(v.acc * 2000), {maxZoom: 12, padding: [16, 16]});
-      L.circle(at, {radius: v.acc * 1000, color, weight: 1, fillOpacity: .1}).addTo(m);
-    } else m.setView(at, 10);
-    // Tiles send the site origin as Referer, which the OSM tile policy requires;
-    // the page itself sends none, so the queried address is not exposed.
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19, referrerPolicy: 'strict-origin-when-cross-origin',
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors'}).addTo(m);
-    L.circleMarker(at, {radius: 6, color, weight: 2, fillColor: color, fillOpacity: .9}).addTo(m);
+    const r = await fetch(url, {signal: c.signal, cache: 'no-store', headers: {accept: 'application/json'}});
+    let body;
+    try { body = await r.json(); } catch { throw new Error('服务器未返回有效结果'); }
+    if (!r.ok) {
+      if (r.status === 429) throw new Error('查询太频繁，请稍后再试');
+      throw new Error(typeof body?.error === 'string' ? body.error : '查询失败，请重新检测');
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('服务器未返回有效结果');
+    return body;
+  } finally {
+    clearTimeout(timer);
+    parent.removeEventListener('abort', abort);
+  }
+}
+function clearError() { input.removeAttribute('aria-invalid'); qerr.hidden = true; }
+function showError(text) { input.setAttribute('aria-invalid', 'true'); qerr.textContent = text; qerr.hidden = false; }
+async function lookup(ip, initialIP = '') {
+  const own = ++sequence;
+  controller?.abort(); controller = new AbortController();
+  const signal = controller.signal;
+  loading = true;
+  clearError(); input.value = ip;
+  label.textContent = ip ? 'IP 地址' : '我的 IP';
+  document.title = (ip ? ip + ' · ' : '') + 'IP 查询';
+  showIP(ip || initialIP);
+  value.textContent = '—'; level.textContent = '评估中…'; total.hidden = false;
+  delete score.dataset.rating;
+  statusEl.textContent = ''; result.setAttribute('aria-busy', 'true');
+  if (!currentIP) {
+    getJSON('/api/ip', signal, 6000).then(r => {
+      if (own === sequence && loading && normIP(r.ip)) showIP(r.ip);
+    }).catch(() => {
+      // The full lookup remains authoritative; its failure is shown below.
+      if (own === sequence && loading && !currentIP) address.textContent = '暂未获取到 IP';
+    });
+  }
+  try {
+    const params = new URLSearchParams({mode: 'full', ...(ip ? {ip} : {})});
+    const r = await getJSON('/api/lookup?' + params, signal);
+    if (own !== sequence) return;
+    if (!normIP(r.ip)) throw new Error('服务器未返回有效 IP');
+    showIP(r.ip);
+    if (r.bogon) {
+      level.textContent = '不适用'; total.hidden = true;
+      statusEl.textContent = String(r.bogon);
+    } else {
+      if (typeof r.score?.value !== 'number' || !Number.isFinite(r.score.value) || r.score.value < 0 || r.score.value > 100)
+        throw new Error('纯净度结果暂不可用，请重新检测');
+      const v = r.score.value;
+      value.textContent = String(v);
+      level.textContent = typeof r.score.level === 'string' && r.score.level ? r.score.level
+        : v >= 95 ? '极度纯净' : v >= 80 ? '纯净' : v >= 50 ? '良好' : v >= 25 ? '中性' : '可疑';
+      score.dataset.rating = v >= 80 ? 'high' : v >= 50 ? 'medium' : 'low';
+    }
   } catch (e) {
-    v.box.replaceChildren(empty('地图加载失败：' + e.message));
-  } finally { v.loading = false; }
-}
-
-function netCard(n) {
-  const p = n.peeringdb || {};
-  return card('网络', kv([
-    ['ASN', n.asn && ext('https://bgp.tools/as/' + n.asn, 'AS' + n.asn)],
-    ['AS 名称', n.as_name],
-    ['AS 域名', n.as_domain],
-    ['AS 国家', ccName(n.as_country)],
-    ['组织', n.org],
-    ['ISP', n.isp],
-    ['前缀', mono(n.prefix)],
-    ['BGP 前缀', mono(n.bgp_prefix)],
-    ['网络名称', n.net_name],
-    ['地址范围', mono(n.net_range)],
-    ['注册机构', n.registry],
-    ['分配日期', n.allocated],
-    ['反向解析', n.rdns?.length && [n.rdns.map(d => h('div', {class: 'mono'}, d)),
-      n.fcrdns === true ? tag('FCrDNS 通过', 150) : n.fcrdns === false ? tag('FCrDNS 未通过') : tag('来自第三方，未校验')]],
-    ['用途类型', n.usage_type],
-    ['RPKI', n.rpki],
-    ['可见性', n.visibility],
-    ['滥用联系', n.abuse],
-    ['AS 分类', n.as_class],
-    ['AS 标签', tags(n.as_tags)],
-    ['同 IP 域名', n.domains?.length && h('div', {class: 'vlist'}, tags(n.domains))],
-  ]) || empty('没有网络信息'),
-  has(Object.values(p)) ? [h('h3', null, 'PeeringDB'), kv([
-    ['名称', p.name], ['网络类型', p.info_type], ['流量', p.info_traffic], ['覆盖范围', p.info_scope],
-    ['流量比例', p.info_ratio], ['网站', p.website && ext(p.website)], ['IRR AS-SET', mono(p.irr_as_set)],
-    ['互联政策', p.policy], ['IX 数量', p.ix_count], ['机房数量', p.fac_count]])] : null);
-}
-
-function sameCountry(a, b) {
-  const n = s => String(s).toLowerCase().replace(/^the\s+/, '').trim();
-  a = n(a); b = n(b);
-  return a === b || a.startsWith(b + ' ') || b.startsWith(a + ' ');
-}
-
-function geoSrcCard(r) {
-  const list = r.geo_sources || [], g = r.geo || {};
-  if (!list.length) return r.mode === 'full' ? card('多源地理对照', empty('没有来源返回地理信息')) : null;
-  const differs = s => s.country_code && g.country_code ? s.country_code.toUpperCase() !== g.country_code.toUpperCase()
-    : !!s.country && has([g.country, g.country_en]) && ![g.country, g.country_en].some(c => c && sameCountry(c, s.country));
-  let diff = 0;
-  const rows = list.map(s => {
-    const d = differs(s); diff += d;
-    const who = s.isp && s.org && s.isp !== s.org ? `${s.isp} / ${s.org}` : s.isp || s.org;
-    // A source that answered with a line of text only keeps it across the place columns.
-    const place = has([s.country, s.country_code, s.region, s.city]) ? [countryOf(s), s.region, s.city]
-      : [h('td', {colspan: 3, class: 'wr'}, s.text)];
-    return tr([s.source, ...place, td(who, 'wr'), s.asn ? 'AS' + s.asn : '', s.type], d ? 'hl' : null);
-  });
-  return card(['多源地理对照', diff ? h('small', null, '高亮行的国家与主结果不一致') : null],
-    table(['来源', '国家', '地区', '城市', 'ISP / 组织', 'ASN', '类型'], rows));
-}
-const ipLine = (ip, ...extra) => h('div', {class: 'ipl'}, mono(ip), extra.filter(Boolean).map(x => h('span', {class: 'mut'}, x)),
-  h('a', {class: 'btn sm', href: '/' + ip, 'data-nav': true}, '查询'));
-
-function connPanel() {
-  const body = h('tbody'), hints = h('ul', {class: 'hints conn-findings', 'aria-live': 'polite'});
-  const progress = h('p', {class: 'conn-progress mut', 'aria-live': 'polite'}, '正在检测当前连接…');
-  const env = h('p', {class: 'conn-env mut'});
-  const retry = h('button', {type: 'button', class: 'btn sm', onclick: start}, '重新检测连接');
-  const download = h('button', {type: 'button', class: 'btn sm', onclick: exportReport}, '导出检测报告');
-  download.disabled = true;
-  const el = card(['我的连接', h('small', null, '当前浏览器与网络的实测结果')],
-    h('div', {class: 'conn-tools'}, retry, download), progress,
-    h('div', {class: 'tw conn-table'}, h('table', null,
-      h('thead', null, h('tr', null, ['检测目标', '观测结果', '状态 / 耗时'].map(t => h('th', {scope: 'col'}, t)))), body)),
-    env, hints,
-    h('p', {class: 'conn-note mut'}, '浏览器会直接访问 ipify、Cloudflare、ChatGPT、Claude、IPIP、ip-api、incolumitas 和 STUN 服务。目标站点的出口只反映这次请求，不代表账号可用或服务已解锁。检测结果不改变上方 IP 信誉评分。'));
-  el.id = 'connection';
-  let result = null, snapshot = null, controller = null, round = 0, stopped = false;
-  function probeValue(p) {
-    if (p.status === 'pending') return h('span', {class: 'mut'}, '等待结果…');
-    if (p.status !== 'ok') return h('span', {class: 'mut'}, p.error || '浏览器不支持此项检测');
-    const d = p.data || {};
-    if (p.id === 'rtc') return [
-      d.publicIPs?.length ? d.publicIPs.map(ip => ipLine(ip, '公网候选')) : h('span', {class: 'mut'}, '未取得公网候选，无法据此确认 UDP 路径'),
-      d.localIPs?.map(ip => ipLine(ip, '本地地址')),
-      d.mdns ? h('div', {class: 'mut'}, '本地候选以 mDNS 名称隐藏') : null,
-      d.note ? h('div', {class: 'mut'}, d.note) : null];
-    if (p.id === 'dns') return [ipLine(d.ip, d.country && ccName(d.country), d.org),
-      d.ecs ? h('div', {class: 'conn-subnet'}, d.ecs.prefixUnknown ? 'EDNS 客户端信息：' : 'EDNS 客户端子网：',
-        mono(d.ecs.subnet), d.ecs.country ? ' · ' + ccName(d.ecs.country) : '')
-        : h('div', {class: 'mut'}, d.ecsError ? 'EDNS 字段未能确认：' + d.ecsError : '服务未返回 EDNS 客户端子网')];
-    if (p.id === 'tcp') return [
-      h('div', null, 'SYN 特征最接近 ', h('b', null, d.os || '未知系统'),
-        Number.isFinite(d.score) ? `（匹配分 ${d.score}${Number.isFinite(d.perfectScore) ? '，参考满分 ' + d.perfectScore : ''}）` : ''),
-      ipLine(d.ip, '指纹服务看到的出口'),
-      h('div', {class: 'mut'}, d.uaOS ? '浏览器系统：' + d.uaOS : '接口未返回浏览器系统核对结果'),
-      d.relay == null && d.mismatch == null ? h('div', {class: 'mut'}, '未提供中继或系统一致性判断') : null];
-    return ipLine(d.ip, d.version && 'IPv' + d.version, d.loc && ccName(d.loc), d.location,
-      d.colo && '边缘节点 ' + d.colo, d.warp && 'WARP ' + d.warp, d.http && d.http.replace(/^http\//i, 'HTTP/'), d.tls);
+    if (own !== sequence) return;
+    value.textContent = '—'; level.textContent = '未能评估';
+    statusEl.textContent = e.name === 'AbortError' ? '评估超时，请重新检测' : e instanceof TypeError ? '连接失败，请重新检测' : e.message;
+  } finally {
+    if (own === sequence) { loading = false; result.setAttribute('aria-busy', 'false'); }
   }
-  function update() {
-    if (!snapshot) return;
-    const probes = snapshot.probes || [], done = probes.filter(p => p.status !== 'pending').length;
-    const unavailable = probes.filter(p => p.status === 'error' || p.status === 'unsupported').length;
-    progress.textContent = `${snapshot.finishedAt ? '检测完成' : '检测中'} · ${done} / ${probes.length} 项已返回`
-      + (unavailable ? ` · ${unavailable} 项未能确认` : '') + ' · ' + fmtTime(snapshot.startedAt);
-    body.replaceChildren(...probes.map(p => {
-      const state = p.status === 'ok' && p.data?.timedOut ? '部分返回'
-        : {pending: '检测中', ok: '已返回', error: '未能确认', unsupported: '不支持'}[p.status] || '未知';
-      return h('tr', {'data-probe': p.id}, h('th', {scope: 'row'}, p.label), td(probeValue(p)),
-        td([h('span', {class: 'probe-state ' + p.status}, state), Number.isFinite(p.ms) ? h('small', null, `${p.ms} ms`) : null]));
-    }));
-    const e = snapshot.environment || {};
-    env.textContent = ['浏览器环境', e.timeZone, Number.isFinite(e.offsetMinutes) && 'UTC ' + signed(e.offsetMinutes / 60),
-      e.languages?.join('、')].filter(Boolean).join(' · ');
-    hints.replaceChildren(...IPConnection.analyze(snapshot, result).map(f =>
-      h('li', {class: f.level === 'warn' ? 'finding-warn' : 'finding-info'}, h('strong', null, f.title), h('span', null, f.detail))));
-    download.disabled = false;
-  }
-  function start() {
-    if (stopped) return;
-    controller?.abort();
-    controller = new AbortController();
-    const own = ++round;
-    snapshot = null;
-    download.disabled = true;
-    retry.disabled = true;
-    retry.textContent = '检测中…';
-    body.replaceChildren(); hints.replaceChildren();
-    progress.textContent = '正在检测当前连接…';
-    IPConnection.collect({signal: controller.signal, onUpdate(s) { if (own === round) { snapshot = s; update(); } }})
-      .then(s => { if (own === round) { snapshot = s; update(); } })
-      .catch(e => { if (own === round && e.name !== 'AbortError') progress.textContent = '连接检测失败：' + errText(e); })
-      .finally(() => { if (own === round) { retry.disabled = false; retry.textContent = '重新检测连接'; } });
-  }
-  function exportReport() {
-    if (!snapshot) return;
-    const report = {schema: 'ip-lookup-connection/v1', exportedAt: new Date().toISOString(),
-      ipReport: result, connection: snapshot, findings: IPConnection.analyze(snapshot, result)};
-    const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], {type: 'application/json;charset=utf-8'}));
-    const a = document.createElement('a');
-    a.href = url; a.download = 'ip-lookup-connection-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
-    document.body.append(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-  start();
-  return {el, setResult(r) { result = r; update(); }, stop() {
-    stopped = true; round++; controller?.abort(); retry.disabled = true; download.disabled = true;
-  }};
 }
-let conn = null, seq = 0, ctl = null;
-function setStatus(cls, ...kids) { statusEl.className = 'status' + (cls ? ' ' + cls : ''); statusEl.replaceChildren(...kids); }
-
-function render(r, pending) {
-  const parts = r.bogon
-    ? [h('section', {class: 'card verdict bogon'}, ipHead(r), h('p', {class: 'v-label'}, '私网或保留地址'), h('p', null, r.bogon))]
-    : [verdictCard(r, pending), h('div', {class: 'grid2'}, h('div', {class: 'col'}, geoCard(r.geo || {}), mapCard(r.geo || {})),
-      netCard(r.network || {})), geoSrcCard(r), evidenceCard(r.verdict?.evidence)];
-  if (conn) { parts.push(conn.el); conn.setResult(r); }
-  out.replaceChildren(...parts.filter(Boolean));
-  out.classList.remove('stale');
-  mountMap();
-}
-
-// fast (offline only) and full start together. fast is shown first with the
-// score held back until full replaces it; a newer lookup cancels older ones.
-async function lookup(ip) {
-  const my = ++seq, c = new AbortController();
-  ctl?.abort(); ctl = c;
-  input.value = ip; clearErr();
-  document.title = (ip ? ip + ' - ' : '') + 'IP 类型查询';
-  conn?.stop(); conn = null;
-  const run = (mode, ms) => timed(ms, s => getJSON('/api/lookup?' + new URLSearchParams(ip ? {ip, mode} : {mode}), s), c.signal);
-  out.classList.add('stale');
-  setStatus('', spinner(), '正在查询…');
-  const fastReq = run('fast', 15000);
-  let full = null;
-  const fullReq = run('full', 25000).then(v => (full = v));
-  fullReq.catch(() => {}); // awaited below once fast is on screen
-  let r;
-  try { r = await fastReq; } catch (e) {
-    if (my !== seq) return;
-    c.abort();
-    if (!ip) conn = connPanel();
-    out.replaceChildren(h('section', {class: 'card errbox'}, h('h2', null, '查询失败'), h('p', null, errText(e))), ...(conn ? [conn.el] : []));
-    out.classList.remove('stale');
-    return setStatus();
-  }
-  if (my !== seq) return;
-  if (!ip && !r.bogon) conn = connPanel();
-  if (r.bogon) { render(r); return setStatus(); }
-  if (!full) {
-    render(r, true);
-    setStatus('', spinner(), '正在查询在线数据源和 DNS，最长约 10 秒…');
-  }
-  try { await fullReq; } catch (e) {
-    if (my !== seq) return;
-    render(r);
-    return setStatus('warn', `完整查询失败：${errText(e)}。下面是仅查离线库的快速结果。`);
-  }
-  if (my !== seq) return;
-  render(full);
-  setStatus();
-}
-
-function clearErr() { input.removeAttribute('aria-invalid'); qerr.hidden = true; }
-function showErr(t) { input.setAttribute('aria-invalid', 'true'); qerr.textContent = t; qerr.hidden = false; }
 function go(ip) {
   if (location.pathname !== '/' + ip) history.pushState(null, '', '/' + ip);
   lookup(ip);
 }
-function route(init) {
+function route(initial = false) {
   let raw = '';
   try { raw = decodeURIComponent(location.pathname.slice(1)).replace(/\/+$/, ''); } catch {}
-  const ip = normIP(raw);
-  lookup(ip);
-  if (init && raw && !ip) { history.replaceState(null, '', '/'); showErr(`“${raw}”不是有效的 IP 地址，下面是你自己的 IP`); }
+  const ip = normIP(raw), firstIP = initial ? currentIP : '';
+  lookup(ip, firstIP);
+  if (raw && !ip) { history.replaceState(null, '', '/'); showError('请输入有效的 IPv4 或 IPv6 地址'); }
 }
-form.addEventListener('submit', e => {
-  e.preventDefault();
-  const v = input.value.trim(), ip = normIP(v);
+form.addEventListener('submit', event => {
+  event.preventDefault();
+  const ip = normIP(input.value);
   if (ip) return go(ip);
-  showErr(v ? `“${v}”不是有效的 IPv4 或 IPv6 地址` : '请输入要查询的 IP 地址');
-  input.focus();
+  showError('请输入有效的 IPv4 或 IPv6 地址'); input.focus();
 });
-input.addEventListener('input', clearErr);
+input.addEventListener('input', clearError);
 $('#me').addEventListener('click', () => go(''));
-document.addEventListener('click', e => {
-  const a = e.target.closest?.('a[data-nav]');
-  if (!a || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-  e.preventDefault();
-  go(normIP(a.getAttribute('href').slice(1)));
-  scrollTo({top: 0});
+$('.brand').addEventListener('click', event => {
+  if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault(); go('');
 });
-addEventListener('popstate', () => route(false));
-
+copyButton.addEventListener('click', async () => {
+  const ip = currentIP;
+  if (!ip) return;
+  let copied = false;
+  try { await navigator.clipboard.writeText(ip); copied = true; } catch {
+    const text = document.createElement('textarea');
+    text.value = ip; text.className = 'vh'; document.body.append(text); text.select();
+    try { copied = document.execCommand('copy'); } catch {}
+    text.remove();
+  }
+  if (currentIP === ip) copyButton.textContent = copied ? '已复制' : '复制失败';
+});
+addEventListener('popstate', () => route());
 route(true);

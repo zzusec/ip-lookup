@@ -1,14 +1,53 @@
 package server
 
 import (
+	"io"
+	"log/slog"
 	"net/http/httptest"
 	"net/netip"
 	"regexp"
+	"strings"
 	"testing"
 	"testing/fstest"
 
 	"github.com/zzusec/ip-lookup/web"
 )
+
+// The initial IP must be usable before JavaScript or any lookup data finishes.
+// No lookup service is configured: serving the page must not need it.
+func TestPageIncludesIPWithoutLookup(t *testing.T) {
+	s := &Server{Web: web.FS, TrustProxy: true, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	h, err := s.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ path, remote, realIP, want string }{
+		{"/", "127.0.0.1:5000", "192.0.2.7", "192.0.2.7"},
+		{"/", "127.0.0.1:5000", "fe80::1%<svg/onload=alert(1)>", "fe80::1"},
+		{"/", "192.0.2.9:5000", "198.51.100.7", "192.0.2.9"},
+		{"/8.8.8.8", "127.0.0.1:5000", "192.0.2.7", "8.8.8.8"},
+		{"/2001:db8::1", "127.0.0.1:5000", "192.0.2.7", "2001:db8::1"},
+	} {
+		r := httptest.NewRequest("GET", c.path, nil)
+		r.RemoteAddr = c.remote
+		r.Header.Set("Accept", "text/html")
+		r.Header.Set("X-Real-IP", c.realIP)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != 200 || !strings.Contains(w.Body.String(), `<h1 id="ipAddress">`+c.want+`</h1>`) {
+			t.Errorf("%s: IP %s not in initial HTML (status %d)", c.path, c.want, w.Code)
+		}
+		if strings.Contains(w.Body.String(), "__IP_ADDRESS__") {
+			t.Error("unresolved address placeholder")
+		}
+		if got := w.Header().Get("Cache-Control"); got != "private, no-store" {
+			t.Errorf("personalized HTML cache policy: %s", got)
+		}
+	}
+	if !strings.Contains(string(s.index), "__IP_ADDRESS__") {
+		t.Error("per-request rendering mutated the shared page")
+	}
+}
 
 func TestVersioned(t *testing.T) {
 	static := fstest.MapFS{"app.js": {Data: []byte("x")}}

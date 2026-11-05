@@ -41,7 +41,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	if s.index, err = versioned(idx, static, "style.css", "connection.js", "app.js", "favicon.svg"); err != nil {
+	if s.index, err = versioned(idx, static, "style.css", "app.js", "favicon.svg"); err != nil {
 		return nil, err
 	}
 	mux := http.NewServeMux()

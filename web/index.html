@@ -4,33 +4,45 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>IP 类型查询</title>
-<meta name="description" content="查询出口 IP 的类型（家宽、机房、移动等）、纯净度和基础信息">
+<title>IP 查询</title>
+<meta name="description" content="查看你的 IP 地址和纯净度评分。">
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/style.css">
-<script src="/static/connection.js" defer></script>
 <script src="/static/app.js" defer></script>
 </head>
 <body>
-<header class="top">
-  <div class="wrap top-in">
-    <a class="brand" href="/" data-nav><img src="/static/favicon.svg" alt="" width="24" height="24">IP 类型查询</a>
-    <form id="q" class="search" autocomplete="off" novalidate>
-      <label for="qi" class="vh">IP 地址</label>
-      <input id="qi" type="text" spellcheck="false" autocapitalize="off" maxlength="64" placeholder="输入 IPv4 或 IPv6 地址">
-      <button type="submit" class="btn primary">查询</button>
-      <button type="button" id="me" class="btn">查我的 IP</button>
-    </form>
-  </div>
-  <p id="qerr" class="wrap qerr" role="alert" hidden></p>
+<header class="wrap top">
+  <a class="brand" href="/" data-nav><img src="/static/favicon.svg" alt="" width="24" height="24">IP 查询</a>
+  <button type="button" id="me" class="btn">查我的 IP</button>
 </header>
 <main class="wrap">
-  <div id="status" class="status" aria-live="polite"></div>
-  <div id="out"></div>
+  <section id="result" class="result" aria-label="IP 地址与纯净度" aria-busy="true">
+    <div class="ip-block">
+      <p id="ipLabel" class="label">IP 地址</p>
+      <div class="ip-line">
+        <h1 id="ipAddress">__IP_ADDRESS__</h1>
+        <button type="button" id="copy" class="btn copy" aria-label="复制 IP 地址">复制</button>
+      </div>
+    </div>
+    <div id="score" class="score" aria-live="polite">
+      <p class="label">纯净度</p>
+      <p class="score-line"><strong id="scoreValue">—</strong><span id="scoreTotal">/100</span></p>
+      <p id="scoreLevel" class="score-level">评估中…</p>
+    </div>
+  </section>
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+  <form id="q" class="search" autocomplete="off" novalidate>
+    <label for="qi" class="vh">查询其他 IP 地址</label>
+    <input id="qi" type="text" spellcheck="false" autocapitalize="off" maxlength="64" placeholder="查询其他 IPv4 或 IPv6 地址">
+    <button type="submit" class="btn primary">查询</button>
+  </form>
+  <p id="qerr" class="qerr" role="alert" hidden></p>
 </main>
 <footer class="wrap foot">
-  <p>离线数据每天更新一次，来自 Merged-IP（GeoLite2 + IPinfo Lite，CC BY-SA 4.0）、<a href="https://db-ip.com" target="_blank" rel="noopener noreferrer">IP Geolocation by DB-IP</a>（CC BY 4.0）、ip2region、bgp.tools 及各类公开 IP 名单。地图数据 © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> 贡献者。</p>
-  <p>ip-api 等免费接口仅限非商业用途。<a href="https://github.com/zzusec/ip-lookup" target="_blank" rel="noopener noreferrer">GitHub 源码</a></p>
+  <details id="attribution">
+    <summary>数据说明</summary>
+    <p>评分基于公开数据，仅供参考。<a href="https://github.com/zzusec/ip-lookup#数据来源与许可" target="_blank" rel="noopener noreferrer">来源与许可</a></p>
+  </details>
 </footer>
 </body>
 </html>

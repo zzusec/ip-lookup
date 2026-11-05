@@ -1,6 +1,6 @@
 # ip-lookup
 
-查询 IP 的类型（家宽 / 移动 / 机房 / CDN / 教育 / 企业 / 政府）、用途标记（Tor、VPN、代理、iCloud 专用代理、爬虫、公共服务、任播）、原生或广播、纯净度评分，以及地理位置、ASN、路由、注册信息等基础资料。
+IP 查询服务。网页集中显示 IP 地址和纯净度；API 与 curl 纯文本还提供类型（家宽 / 移动 / 机房 / CDN / 教育 / 企业 / 政府）、用途标记（Tor、VPN、代理、iCloud 专用代理、爬虫、公共服务、任播）、原生或广播，以及地理位置、ASN、路由、注册信息等基础资料。
 
 部署后通过自己的域名访问；以下命令以 `ip.example.com` 为例。
 
@@ -12,7 +12,11 @@ curl ip.example.com/json/8.8.8.8 # 完整 JSON
 
 ## 工作方式
 
-每次查询会汇总三类数据，再由打分规则得出结论。网页第一屏是摘要：ASN、IP 范围、几个主要数据库各自的定位、原生或广播、类型和用途；下面是地理与网络详情、地图、多源地理对照和每一条判定依据。风险评分、名单命中、DNSBL 和开放端口照常参与纯净度计分，但页面上不展示，只在 API 结果和 curl 纯文本里提供；各数据源的响应状态和耗时只在 API 结果的 `sources` 字段里。
+首页只展示 IP 地址和纯净度，支持输入其他 IP、查我的 IP、复制地址。Go 在首屏直接输出 IP，不等待在线评分；随后发起 `full` 查询取得纯净度。等待结果时不显示预设的 100 分，查询失败时保留 IP，并将纯净度显示为“未知”。来源与许可默认收在小型“数据说明”折叠入口。
+
+地理、网络、地图、多源对照、判定依据、连接探测明细和扣分项不在首页展示。后端的类型判断、地理与网络资料、风险分析和评分规则保持完整，API 与 curl 纯文本继续提供详细结果；各数据源的响应状态和耗时在 API 结果的 `sources` 字段里。首页不加载连接检测脚本或地图，也不自动发起浏览器端的第三方请求与 STUN 探测。
+
+服务端每次查询会汇总三类数据，再由打分规则得出结论：
 
 - **离线数据**：服务端每天检查一次更新（带 ETag 的条件请求，没变就不重新下载），查询时直接读取本地文件，耗时在毫秒级。
   - 地理库：Merged-IP（合并了 GeoLite2、IPinfo Lite 和 DB-IP）、DB-IP Lite、ip2region。
@@ -26,21 +30,11 @@ curl ip.example.com/json/8.8.8.8 # 完整 JSON
   - 注册与路由：RDAP、RIPEstat（路由可见度、RPKI、RIR 统计）、PeeringDB。
 - **DNS 查询**：反向解析并做正反解校验（FCrDNS），通过 Team Cymru 查 ASN，另查 12 个 DNSBL 黑名单。
 
-页面打开时，浏览器还会通过 ipify、Cloudflare trace、WebRTC 等方式探测访客的其他出口地址，并检测 DNS 出口。
+## 连接检测研究
 
-## 我的连接
+`web/static/connection.js` 与 `web/connection.test.cjs` 保留独立的连接检测逻辑和测试，涵盖多目标出口、随机 DNS / ECS、WebRTC / STUN、TCP 系统特征和浏览器环境。当前首页不加载或运行该模块，“查我的 IP”也不会触发这些探测；连接观测不参与 IP 纯净度评分。
 
-首页或点击“查我的 IP”时，浏览器会并行实测当前网络；查询指定 IP 时不运行这些探测，避免把访客的网络环境算到别人的 IP 上。连接结果独立于 IP 资料和纯净度评分：
-
-- **目标站点出口对照**：本站、ipify IPv4 / IPv6 / 双栈、Cloudflare、ChatGPT、Claude 与国内目标分别看到的地址。相同地址族内出现多个出口时，提示按目标分流、多出口或负载均衡的可能；收到 trace 不代表账号可用、地区支持或服务已解锁。
-- **DNS 与 EDNS 客户端子网**：每轮使用安全随机的 128 bit 子域名请求 ip-api EDNS 接口，减少已有 DNS 缓存的影响；单独展示解析器和接口实际返回的 ECS 子网。若只返回地址而没有前缀长度，就保留原值并提示覆盖范围未知；ECS 字段异常也不会抹去有效的解析器观测。公共解析器跨国、Anycast 或定位误差本身不足以确认泄露，未返回 ECS 也不代表所有解析请求都不会携带 ECS。
-- **WebRTC / STUN**：区分公网候选、本地地址和 mDNS 隐藏。只与同地址族的网页出口比较；IPv6 同 `/64` 仅表示前缀相同，不当成同一地址。没有候选或探测失败时保留未知状态；到达时限而只获得部分候选时明确标注“部分返回”。
-- **TCP 系统指纹**：浏览器直连 incolumitas，展示第三方推断的 SYN 系统特征、原始匹配分，以及它实际看到的出口。仅在出口与本轮网页观测一致时解释中继或系统差异；系统差异是线索，不能单独证明代理或泄露。匹配分不是概率。
-- **浏览器环境与检测记录**：显示本地时区、UTC 偏移和语言；每项保留状态、耗时和错误。支持重新检测及在浏览器本地导出包含原始观测与判定依据的 JSON 报告。切换查询会取消旧一轮请求并关闭 WebRTC 连接。
-
-这些探测会直接联系页面列出的第三方，因此各服务会看到访客访问它们时的出口 IP。跨域限制、挑战页、浏览器扩展、超时和目标故障均按“未能确认”展示，不当作“无 IPv6”或“网络安全”。耗时包含第三方服务处理时间，不是链路 ping 延迟。
-
-整合思路参考 [egress-observatory](https://github.com/BlackSlience-Reaper/egress-observatory) 的多目标观测、连接证据与 IP 信誉分离，以及 [whoprobe](https://github.com/zzusec/whoprobe) 的目标站点矩阵、随机 DNS 与 WebRTC 状态区分。代码在本项目独立实现。没有引入需要 `CAP_NET_RAW` 的抓包服务，也没有将反向代理的 TLS 握手冒充访客指纹；验证码和账号可用性不在本轮探测范围。
+模块的研究思路参考 [egress-observatory](https://github.com/BlackSlience-Reaper/egress-observatory) 的多目标观测与连接证据分离，以及 [whoprobe](https://github.com/zzusec/whoprobe) 的目标站点矩阵、随机 DNS 与 WebRTC 状态区分，代码在本项目独立实现。若单独运行，第三方会看到访客请求它们时的出口 IP；失败或未返回数据只能表示未知，不能证明没有泄露、网络安全或服务已解锁。第三方推断和系统差异只是线索，耗时也不是链路 ping 延迟。
 
 ## 判定规则
 
@@ -51,7 +45,7 @@ curl ip.example.com/json/8.8.8.8 # 完整 JSON
 - **纯净度**：从 100 分开始扣分，扣分项包括 Tor/代理/VPN、机房、滥用记录、DNSBL 命中和第三方风险分。
   - 分档：≥95 极度纯净，≥80 纯净，≥50 良好，≥25 中性，其余为可疑。
 
-这些结论来自公开数据的统计推断，只能作为参考。各数据源本身也有误判，页面会列出类型判定的全部依据，其余原始数据可从 API 获取，便于自行核对。
+这些结论来自公开数据的统计推断，只能作为参考。各数据源本身也有误判，类型判定依据、扣分项及其余原始数据可从 API 与 curl 纯文本获取，便于自行核对。
 
 ## API
 
@@ -85,10 +79,10 @@ systemctl daemon-reload && systemctl enable --now ip-lookup
 ```sh
 go test ./...
 node --test web/connection.test.cjs
-node --test web/connection.ui.test.cjs
+node --test web/app.ui.test.cjs
 ```
 
-浏览器测试需要已安装的 Playwright 与 Chromium；支持通过 `CHROMIUM_PATH` 指定浏览器，不自动下载依赖。测试使用合成数据拦截所有第三方请求，覆盖自查与指定 IP 的隔离、重新检测、导航取消、报告导出及 393px 手机布局。接口真实可达性由访客本轮结果反映，不由测试夹具保证。
+浏览器测试需要已安装的 Playwright 与 Chromium；支持通过 `CHROMIUM_PATH` 指定浏览器，不自动下载依赖。首页测试使用合成数据验证首屏 IP、纯净度等待与失败状态、查询与复制操作、第三方探测不自动运行及 393px 手机布局。独立连接模块另用合成响应验证观测与判定逻辑；测试夹具不保证真实第三方接口可达。
 
 ## 数据来源与许可
 
@@ -97,5 +91,5 @@ node --test web/connection.ui.test.cjs
 - GeoLite2、IPinfo Lite（经 Merged-IP 合并）：CC BY-SA 4.0。DB-IP Lite：CC BY 4.0，页面已按要求署名。
 - ip2region：Apache-2.0。lord-alfred/ipranges：CC0。axpwx/IP-Data、monosans/proxy-list：MIT。stamparm/ipsum：Unlicense。proxifly/free-proxy-list：GPL-3.0。
 - X4BNet/lists_vpn、FireHOL、bgp.tools、Spamhaus DROP、各云厂商网段：按各自网站的使用条款。
-- 地图：Leaflet 1.9.4（BSD-2-Clause，随代码放在 `web/static/vendor/leaflet/`），底图来自 OpenStreetMap（ODbL），页面带有署名。
+- 保留的地图依赖：Leaflet 1.9.4（BSD-2-Clause，随代码放在 `web/static/vendor/leaflet/`）；OpenStreetMap 数据采用 ODbL。当前首页不加载地图或请求底图，后续若启用 OpenStreetMap 底图，须保留贡献者署名。
 - ip-api.com 的免费接口仅限非商业用途，商业部署需要购买它的 Pro 版，或者从 `internal/sources/all.go` 中移除这个数据源。

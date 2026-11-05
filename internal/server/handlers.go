@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"net/http"
 	"net/netip"
 	"strings"
@@ -86,11 +87,20 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if isBrowser(r) {
+		ip := s.clientIP(r).Unmap().WithZone("")
+		if raw := r.PathValue("ip"); raw != "" {
+			ip, _ = netip.ParseAddr(strings.Trim(raw, "[]"))
+			ip = ip.Unmap().WithZone("")
+		}
+		address := ""
+		if ip.IsValid() {
+			address = ip.String()
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Cache-Control", "private, no-store")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; connect-src *; img-src 'self' data: https:; "+
 			"style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'")
-		w.Write(s.index)
+		w.Write(bytes.ReplaceAll(s.index, []byte("__IP_ADDRESS__"), []byte(address)))
 		return
 	}
 	full := r.URL.Query().Get("mode") != "fast"

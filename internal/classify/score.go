@@ -96,6 +96,7 @@ func Score(r *model.Result) model.Score {
 	}
 	s.Value = max(0, min(100, s.Value))
 	s.Level = Level(s.Value)
+	s.DataStatus, s.Coverage = scoreCoverage(r, len(s.Factors) > 0)
 	return s
 }
 

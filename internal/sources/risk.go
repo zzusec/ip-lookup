@@ -48,7 +48,8 @@ func proxycheck(key string) *Provider {
 				}
 				Detections struct {
 					Proxy, VPN, Compromised, Scraper, Tor, Hosting, Anonymous bool
-					Risk, Confidence                                          int
+					Risk                                                      *int
+					Confidence                                                int
 				}
 				Operator *struct{ Name string }
 			}
@@ -74,13 +75,18 @@ func proxycheck(key string) *Provider {
 					o.Signal(f.kind, "proxycheck.io", "detections."+f.kind, f.w)
 				}
 			}
-			detail := fmt.Sprintf("risk %d，置信度 %d", det.Risk, det.Confidence)
+			detail := ""
+			if validRiskScore(det.Risk) {
+				detail = fmt.Sprintf("risk %d，置信度 %d", *det.Risk, det.Confidence)
+			}
 			if d.Operator != nil && d.Operator.Name != "" {
 				detail += "，运营方 " + d.Operator.Name
 				o.Signal("vpn", "proxycheck.io", "operator="+d.Operator.Name, 70)
 			}
 			o.Do(func(r *model.Result) {
-				r.Risk = append(r.Risk, model.Risk{Source: "proxycheck.io", Value: det.Risk, Detail: detail})
+				if validRiskScore(det.Risk) {
+					r.Risk = append(r.Risk, model.Risk{Source: "proxycheck.io", Value: *det.Risk, Detail: detail})
+				}
 				if r.Network.Prefix == "" {
 					r.Network.Prefix = d.Network.Range
 				}
@@ -123,7 +129,7 @@ func ipyou() *Provider {
 					Source     string
 				} `json:"usage_inferred"`
 				Score struct {
-					Score int
+					Score *int
 					Level string
 				} `json:"ip_score"`
 				Native struct {
@@ -136,7 +142,7 @@ func ipyou() *Provider {
 					ProxyLabel string `json:"proxy_label"`
 					UsageType  string `json:"usage_type"`
 					UsageLabel string `json:"usage_label"`
-					FraudScore int    `json:"fraud_score"`
+					FraudScore *int   `json:"fraud_score"`
 				} `json:"proxy_info"`
 				Blocklisted bool
 			}
@@ -171,9 +177,11 @@ func ipyou() *Provider {
 				o.Hint("reg_cc:ipyou", d.Native.RegistryCC)
 			}
 			o.Do(func(r *model.Result) {
-				r.Risk = append(r.Risk, model.Risk{Source: "ipyou.net", Value: d.Score.Score, Detail: "等级 " + d.Score.Level})
-				if d.ProxyInfo.Found && d.ProxyInfo.FraudScore > 0 {
-					r.Risk = append(r.Risk, model.Risk{Source: "IP2Proxy 欺诈分（经 ipyou.net）", Value: d.ProxyInfo.FraudScore})
+				if validRiskScore(d.Score.Score) {
+					r.Risk = append(r.Risk, model.Risk{Source: "ipyou.net", Value: *d.Score.Score, Detail: "等级 " + d.Score.Level})
+				}
+				if d.ProxyInfo.Found && validRiskScore(d.ProxyInfo.FraudScore) {
+					r.Risk = append(r.Risk, model.Risk{Source: "IP2Proxy 欺诈分（经 ipyou.net）", Value: *d.ProxyInfo.FraudScore})
 				}
 				if r.Network.UsageType == "" && d.ProxyInfo.UsageLabel != "" {
 					r.Network.UsageType = d.ProxyInfo.UsageType + " " + d.ProxyInfo.UsageLabel
@@ -213,16 +221,18 @@ func greynoise(key string) *Provider {
 				o.Signal("public_service", "GreyNoise", "RIOT: "+d.Name, 60)
 			}
 			if d.Noise {
-				v := map[string]int{"malicious": 90, "unknown": 50, "benign": 10}[d.Classification]
+				v, known := map[string]int{"malicious": 90, "unknown": 50, "benign": 10}[d.Classification]
 				if d.Classification == "malicious" {
 					o.Signal("abuser", "GreyNoise", "正在扫描互联网："+detail, 70)
 				}
 				if d.Classification == "benign" && d.Name != "" {
 					o.Signal("crawler", "GreyNoise", "良性扫描："+d.Name, 50)
 				}
-				o.Do(func(r *model.Result) {
-					r.Risk = append(r.Risk, model.Risk{Source: "GreyNoise", Value: v, Detail: detail + " " + d.LastSeen})
-				})
+				if known {
+					o.Do(func(r *model.Result) {
+						r.Risk = append(r.Risk, model.Risk{Source: "GreyNoise", Value: v, Detail: detail + " " + d.LastSeen})
+					})
+				}
 			}
 			return nil
 		}}

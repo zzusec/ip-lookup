@@ -1,6 +1,6 @@
 # ip-lookup
 
-IP 查询服务。网页集中显示 IP 地址和纯净度；API 与 curl 纯文本还提供类型（家宽 / 移动 / 机房 / CDN / 教育 / 企业 / 政府）、用途标记（Tor、VPN、代理、iCloud 专用代理、爬虫、公共服务、任播）、原生或广播，以及地理位置、ASN、路由、注册信息等基础资料。
+查询 IP 的类型（家宽 / 移动 / 机房 / CDN / 教育 / 企业 / 政府）、用途标记（Tor、VPN、代理、iCloud 专用代理、爬虫、公共服务、任播）、原生或广播、纯净度评分，以及地理位置、ASN、路由、注册信息等基础资料。
 
 部署后通过自己的域名访问；以下命令以 `ip.example.com` 为例。
 
@@ -12,9 +12,13 @@ curl ip.example.com/json/8.8.8.8 # 完整 JSON
 
 ## 工作方式
 
-首页只展示 IP 地址和纯净度，支持输入其他 IP、查我的 IP、复制地址。Go 在首屏直接输出 IP，不等待在线评分；随后发起 `full` 查询取得纯净度。等待结果时不显示预设的 100 分，查询失败时保留 IP，并将纯净度显示为“未知”。来源与许可默认收在小型“数据说明”折叠入口。
+页面上半部分保留 IP 类型摘要：IP 地址、ASN、AS 域名、IP 范围、位置、原生或广播、IP 属性及置信度、纯净度；下方保留地理位置、位置地图和网络资料。支持输入其他 IP、查我的 IP、复制地址。
 
-地理、网络、地图、多源对照、判定依据、连接探测明细和扣分项不在首页展示。后端的类型判断、地理与网络资料、风险分析和评分规则保持完整，API 与 curl 纯文本继续提供详细结果；各数据源的响应状态和耗时在 API 结果的 `sources` 字段里。首页不加载连接检测脚本或地图，也不自动发起浏览器端的第三方请求与 STUN 探测。
+Go 在首屏直接输出 IP，不等待在线评分，页面响应使用 `Cache-Control: private, no-store`。浏览器并发发起 `fast` 与 `full` 查询，先用快速查询呈现离线基础资料，再以完整结果更新。纯净度等待 `full` 结果，不先显示预设的 100 分；完整查询失败时保留 IP 和已经取得的基础资料，并将纯净度显示为未知（页面文案为“未能评估”）。
+
+下方独立的多源地理对照、判定依据、连接探测明细和纯净度扣分列表不在页面展示。底部不再显示大段来源和地图说明，只保留小型“数据说明”链接入口；完整来源与许可列在本文末尾。后端保留类型判断、地理与网络资料、风险分析和原有扣分数学，评分新增数据可用性处理。API 与 curl 纯文本继续提供详细结果；各数据源的响应状态和耗时在 API 结果的 `sources` 字段里。
+
+首页不加载连接检测脚本，不自动执行 STUN 或向 ChatGPT、Claude 等目标发起连接探测。有效经纬度可用时，地图按需加载本站提供的 Leaflet 组件，并请求 OpenStreetMap 图块；地图仍会产生浏览器端的第三方请求，署名保留在地图控件中。
 
 服务端每次查询会汇总三类数据，再由打分规则得出结论：
 
@@ -44,6 +48,14 @@ curl ip.example.com/json/8.8.8.8 # 完整 JSON
 - **原生 / 广播**：比较 RIR 登记国家和地理定位国家，两者一致为原生 IP，不一致为广播 IP。
 - **纯净度**：从 100 分开始扣分，扣分项包括 Tor/代理/VPN、机房、滥用记录、DNSBL 命中和第三方风险分。
   - 分档：≥95 极度纯净，≥80 纯净，≥50 良好，≥25 中性，其余为可疑。
+
+评分新增 `score.data_status`（`complete` / `limited` / `unavailable`）与 `score.coverage`（`received` 为有效信誉源数，`total` 为本轮请求涉及的相关信誉源数）。只有实际返回、类型正确的安全相关布尔值或 0–100 风险读数（含 0）才计为有效信誉数据；地理或 ASN 数据、HTTP 200、空事件记录、DNSBL 子查询错误均不当作安全证据。覆盖统计按提供方去重，同一提供方的派生风险不算独立的第二个来源。
+
+完整查询至少有两个有效信誉源，且本轮请求涉及的相关信誉源全部返回有效数据时，状态才为 `complete`；只有一个有效源也属于 `limited`。没有有效信誉数据且无既有扣分证据时为 `unavailable`；已有离线风险、机房等扣分证据时，可保留数值并标记 `limited`。
+
+原有扣分数学及 JSON 的 `score.value`、`score.level`、`score.factors` 保留兼容，客户端须优先检查 `data_status`：`unavailable` 下的数值基线并非实测结果，不能解释为满分安全。网页和 curl 在此时显示未知，页面使用“未能评估 / 数据不足”；`limited` 标记“数据有限”。评分环下只显示一行数据状态与有效 / 本轮信誉源数，不增加明细。覆盖状态表示数据可用程度，不是安全保证。
+
+“缺少证据时不假报 100 分”的处理参考 [LinXiaoTao/FuckClaude](https://github.com/LinXiaoTao/FuckClaude) 的思路，由本项目自行实现，未复制其代码，也未引入浏览器指纹“中国用户分”、账号解锁推断或新的 API key。
 
 这些结论来自公开数据的统计推断，只能作为参考。各数据源本身也有误判，类型判定依据、扣分项及其余原始数据可从 API 与 curl 纯文本获取，便于自行核对。
 
@@ -82,14 +94,14 @@ node --test web/connection.test.cjs
 node --test web/app.ui.test.cjs
 ```
 
-浏览器测试需要已安装的 Playwright 与 Chromium；支持通过 `CHROMIUM_PATH` 指定浏览器，不自动下载依赖。首页测试使用合成数据验证首屏 IP、纯净度等待与失败状态、查询与复制操作、第三方探测不自动运行及 393px 手机布局。独立连接模块另用合成响应验证观测与判定逻辑；测试夹具不保证真实第三方接口可达。
+浏览器测试需要已安装的 Playwright 与 Chromium；支持通过 `CHROMIUM_PATH` 指定浏览器，不自动下载依赖。首页测试使用合成数据验证首屏 IP、摘要与地理及网络资料、纯净度等待、失败及数据可用性状态、查询与复制操作、连接探测不自动运行、地图按需加载及 393px 手机布局。独立连接模块另用合成响应验证观测与判定逻辑；测试夹具不保证真实第三方接口可达。
 
 ## 数据来源与许可
 
 本项目代码采用 MIT 许可。数据不随代码分发，由服务端从各来源下载，使用时请遵守原始许可：
 
-- GeoLite2、IPinfo Lite（经 Merged-IP 合并）：CC BY-SA 4.0。DB-IP Lite：CC BY 4.0，页面已按要求署名。
+- GeoLite2、IPinfo Lite（经 Merged-IP 合并）：CC BY-SA 4.0。DB-IP Lite：CC BY 4.0。页面通过“数据说明”入口提供来源与许可信息。
 - ip2region：Apache-2.0。lord-alfred/ipranges：CC0。axpwx/IP-Data、monosans/proxy-list：MIT。stamparm/ipsum：Unlicense。proxifly/free-proxy-list：GPL-3.0。
 - X4BNet/lists_vpn、FireHOL、bgp.tools、Spamhaus DROP、各云厂商网段：按各自网站的使用条款。
-- 保留的地图依赖：Leaflet 1.9.4（BSD-2-Clause，随代码放在 `web/static/vendor/leaflet/`）；OpenStreetMap 数据采用 ODbL。当前首页不加载地图或请求底图，后续若启用 OpenStreetMap 底图，须保留贡献者署名。
+- 地图：Leaflet 1.9.4（BSD-2-Clause，随代码放在 `web/static/vendor/leaflet/`），底图来自 OpenStreetMap（ODbL）。地图控件保留 OpenStreetMap 贡献者署名；页面底部不重复展示大段来源说明。
 - ip-api.com 的免费接口仅限非商业用途，商业部署需要购买它的 Pro 版，或者从 `internal/sources/all.go` 中移除这个数据源。

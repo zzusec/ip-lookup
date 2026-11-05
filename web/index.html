@@ -4,45 +4,36 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>IP 查询</title>
-<meta name="description" content="查看你的 IP 地址和纯净度评分。">
+<title>IP 类型查询</title>
+<meta name="description" content="查询出口 IP 的类型（家宽、机房、移动等）、纯净度和基础信息">
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/style.css">
 <script src="/static/app.js" defer></script>
 </head>
 <body>
-<header class="wrap top">
-  <a class="brand" href="/" data-nav><img src="/static/favicon.svg" alt="" width="24" height="24">IP 查询</a>
-  <button type="button" id="me" class="btn">查我的 IP</button>
+<header class="top">
+  <div class="wrap top-in">
+    <a class="brand" href="/" data-nav><img src="/static/favicon.svg" alt="" width="24" height="24">IP 类型查询</a>
+    <form id="q" class="search" autocomplete="off" novalidate>
+      <label for="qi" class="vh">IP 地址</label>
+      <input id="qi" type="text" spellcheck="false" autocapitalize="off" maxlength="64" placeholder="输入 IPv4 或 IPv6 地址">
+      <button type="submit" class="btn primary">查询</button>
+      <button type="button" id="me" class="btn">查我的 IP</button>
+    </form>
+  </div>
+  <p id="qerr" class="wrap qerr" role="alert" hidden></p>
 </header>
 <main class="wrap">
-  <section id="result" class="result" aria-label="IP 地址与纯净度" aria-busy="true">
-    <div class="ip-block">
-      <p id="ipLabel" class="label">IP 地址</p>
-      <div class="ip-line">
-        <h1 id="ipAddress">__IP_ADDRESS__</h1>
-        <button type="button" id="copy" class="btn copy" aria-label="复制 IP 地址">复制</button>
-      </div>
-    </div>
-    <div id="score" class="score" aria-live="polite">
-      <p class="label">纯净度</p>
-      <p class="score-line"><strong id="scoreValue">—</strong><span id="scoreTotal">/100</span></p>
-      <p id="scoreLevel" class="score-level">评估中…</p>
-    </div>
-  </section>
-  <p id="status" class="status" role="status" aria-live="polite"></p>
-  <form id="q" class="search" autocomplete="off" novalidate>
-    <label for="qi" class="vh">查询其他 IP 地址</label>
-    <input id="qi" type="text" spellcheck="false" autocapitalize="off" maxlength="64" placeholder="查询其他 IPv4 或 IPv6 地址">
-    <button type="submit" class="btn primary">查询</button>
-  </form>
-  <p id="qerr" class="qerr" role="alert" hidden></p>
+  <div id="status" class="status" aria-live="polite"></div>
+  <div id="out">
+    <section id="result" class="card verdict" aria-busy="true">
+      <div><div class="v-ip"><h1 id="ipAddress">__IP_ADDRESS__</h1></div><p class="v-label">识别中…</p></div>
+      <div id="score" class="score"><div class="ring wait" style="--v:0;--h:200"><b id="scoreValue">—</b><span id="scoreLevel">评估中…</span></div><span class="mut">纯净度 <span id="scoreTotal">/100</span></span></div>
+    </section>
+  </div>
 </main>
 <footer class="wrap foot">
-  <details id="attribution">
-    <summary>数据说明</summary>
-    <p>评分基于公开数据，仅供参考。<a href="https://github.com/zzusec/ip-lookup#数据来源与许可" target="_blank" rel="noopener noreferrer">来源与许可</a></p>
-  </details>
+  <a id="attribution" href="https://github.com/zzusec/ip-lookup#数据来源与许可" target="_blank" rel="noopener noreferrer">数据说明</a>
 </footer>
 </body>
 </html>

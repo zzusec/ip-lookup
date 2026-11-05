@@ -50,12 +50,14 @@ type Ports struct {
 
 // Source reports how one data source behaved for this query.
 type Source struct {
-	Name   string `json:"name"`
-	Kind   string `json:"kind"`   // offline | online | dns
-	Status string `json:"status"` // ok | empty | error | timeout | skipped | quota
-	Ms     int64  `json:"ms"`
-	Error  string `json:"error,omitempty"`
-	Cached bool   `json:"cached,omitempty"`
+	Name             string `json:"name"`
+	Kind             string `json:"kind"`   // offline | online | dns
+	Status           string `json:"status"` // ok | empty | error | timeout | skipped | quota
+	Ms               int64  `json:"ms"`
+	Error            string `json:"error,omitempty"`
+	Cached           bool   `json:"cached,omitempty"`
+	ReputationSource bool   `json:"reputation_source,omitempty"` // applicable provider can return reputation data
+	Reputation       bool   `json:"reputation,omitempty"`        // this answer actually included valid reputation fields
 }
 
 // ClientIP is the answer of /api/ip.

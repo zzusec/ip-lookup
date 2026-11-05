@@ -21,11 +21,18 @@ func ipapiIs(key string) *Provider {
 		Fetch: get(u, nil),
 		Apply: func(o *Out, q Query, raw []byte) error {
 			var d struct {
-				Company                                                                     json.RawMessage `json:"company"`
-				ASN                                                                         json.RawMessage `json:"asn"`
-				City, Region, Country                                                       string
-				Lat, Lon                                                                    float64
-				IsBogon, IsMobile, IsDatacenter, IsTor, IsProxy, IsVPN, IsAbuser, IsCrawler bool
+				Company               json.RawMessage `json:"company"`
+				ASN                   json.RawMessage `json:"asn"`
+				City, Region, Country string
+				Lat, Lon              float64
+				IsBogon               bool `json:"is_bogon"`
+				IsMobile              bool `json:"is_mobile"`
+				IsDatacenter          bool `json:"is_datacenter"`
+				IsTor                 bool `json:"is_tor"`
+				IsProxy               bool `json:"is_proxy"`
+				IsVPN                 bool `json:"is_vpn"`
+				IsAbuser              bool `json:"is_abuser"`
+				IsCrawler             bool `json:"is_crawler"`
 			}
 			if err := json.Unmarshal(raw, &d); err != nil {
 				return err

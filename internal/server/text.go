@@ -30,7 +30,15 @@ func Text(r *model.Result, host string) string {
 		return b.String()
 	}
 	line("类型", fmt.Sprintf("%s（置信度 %s）", r.Verdict.Label, confidenceZH[r.Verdict.Confidence]))
-	line("纯净度", fmt.Sprintf("%d 分 · %s", r.Score.Value, r.Score.Level))
+	if r.Score.DataStatus == "unavailable" {
+		line("纯净度", "未知 · 信誉数据不足")
+	} else {
+		score := fmt.Sprintf("%d 分 · %s", r.Score.Value, r.Score.Level)
+		if r.Score.DataStatus == "limited" {
+			score += "（数据有限）"
+		}
+		line("纯净度", score)
+	}
 	line("原生", r.Native.Label+"  "+r.Native.Detail)
 	g := r.Geo
 	line("位置", join(g.Flag, g.Country, g.Region, g.City, g.District))

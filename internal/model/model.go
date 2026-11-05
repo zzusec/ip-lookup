@@ -45,9 +45,18 @@ type Verdict struct {
 }
 
 type Score struct {
-	Value   int      `json:"value"`
-	Level   string   `json:"level"`
-	Factors []Factor `json:"factors"`
+	Value      int            `json:"value"`
+	Level      string         `json:"level"`
+	Factors    []Factor       `json:"factors"`
+	DataStatus string         `json:"data_status,omitempty"` // complete | limited | unavailable
+	Coverage   *ScoreCoverage `json:"coverage,omitempty"`
+}
+
+// ScoreCoverage counts providers that actually returned reputation data.
+// Geography, transport success and an empty incident record are not checks.
+type ScoreCoverage struct {
+	Received int `json:"received"`
+	Total    int `json:"total"`
 }
 
 type Factor struct {

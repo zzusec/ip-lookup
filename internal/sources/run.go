@@ -47,7 +47,7 @@ func (s *Set) Run(ctx context.Context, q Query, o *Out, after bool) []model.Sour
 
 func (s *Set) one(ctx context.Context, p *Provider, q Query, o *Out) (st model.Source) {
 	start := time.Now()
-	st = model.Source{Name: p.Name, Kind: p.Kind, Status: "ok"}
+	st = model.Source{Name: p.Name, Kind: p.Kind, Status: "ok", ReputationSource: reputationSource(p.Name)}
 	defer func() {
 		if r := recover(); r != nil { // a malformed answer must not take the request down
 			st.Status, st.Error = "error", "internal error while parsing"
@@ -102,6 +102,8 @@ func (s *Set) one(ctx context.Context, p *Provider, q Query, o *Out) (st model.S
 		} else {
 			st.Status, st.Error = "error", err.Error()
 		}
+	} else if st.ReputationSource {
+		st.Reputation = reputationData(p.Name, raw, q.Addr)
 	}
 	return st
 }

@@ -62,7 +62,7 @@ func reputationData(name string, raw []byte, addr netip.Addr) bool {
 			return false
 		}
 		switch classification {
-		case "malicious", "unknown", "benign":
+		case "malicious", "benign":
 			return reputationBool(top, "noise", "riot")
 		}
 	}

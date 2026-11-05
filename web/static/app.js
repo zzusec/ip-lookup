@@ -2,6 +2,8 @@
 const $ = s => document.querySelector(s);
 const bootIP = $('#ipAddress')?.textContent || '';
 const out = $('#out'), statusEl = $('#status'), form = $('#q'), input = $('#qi'), qerr = $('#qerr');
+const scoreDialog = $('#scoreDetails'), scoreDetailsBody = $('#scoreDetailsBody');
+let scoreDetailsOpener = null;
 
 const HUE = {residential: 150, mobile: 195, hosting: 28, cdn: 265, business: 215, education: 175, government: 330,
   tor: 4, vpn: 4, proxy: 4, abuser: 4, abuse: 4, crawler: 45, icloud_relay: 210, public_service: 190, anycast: 240, satellite: 280, org: 215};
@@ -117,27 +119,26 @@ const ipHead = r => h('div', {class: 'v-ip'},
 
 function verdictCard(r, pending, failed = false) {
   const v = r.verdict || {}, conf = CONF[v.confidence], hue = HUE[v.type], n = r.network || {};
-  return h('section', {id: 'result', 'aria-busy': String(Boolean(pending && !failed && !r.bogon)), class: hue == null ? 'card verdict' : 'card verdict hue', style: hue == null ? null : {'--h': hue}},
-    h('div', null,
-      ipHead(r),
-      h('p', {class: 'v-label'}, r.bogon ? '私网或保留地址' : v.label || v.type_label || (pending && !failed ? '识别中…' : '未知')),
-      r.bogon ? h('p', null, r.bogon) : null,
-      kv([
-        ['ASN', n.asn && [ext('https://bgp.tools/as/' + n.asn, 'AS' + n.asn), n.as_name ? ' – ' + n.as_name : '']],
-        ['AS 域名', n.as_domain],
-        ['IP 范围', mono(n.net_range || n.bgp_prefix || n.prefix)],
-        ['位置', places(r)],
-        ['IP 来源', nativeLine(r.native || {})],
-        ['IP 属性', h('div', {class: 'tags'},
-          v.type_label ? tag(v.type_label, hue) : null,
-          (v.usage_labels || []).map((l, i) => tag(l, HUE[v.usage?.[i]] ?? 4)),
-          conf ? h('span', {class: 'conf c' + conf[1]}, '置信度', h('i'), h('i'), h('i'), ' ' + conf[0]) : null)],
-      ]),
-      h('p', {class: 'meta'},
-        h('span', null, r.mode === 'full' ? '完整查询' : '快速查询（仅离线库）'),
-        r.queried_at ? h('span', null, '查询于 ' + fmtTime(r.queried_at)) : null,
-        r.elapsed_ms != null ? h('span', null, `耗时 ${r.elapsed_ms} ms`) : null)),
-    scoreBox(r.score || {}, r.bogon ? 'bogon' : failed ? 'error' : pending ? 'pending' : ''));
+  const identity = h('div', {class: 'summary-identity'}, ipHead(r),
+    h('p', {class: 'v-label'}, r.bogon ? '私网或保留地址' : v.label || v.type_label || (pending && !failed ? '识别中…' : '未知')),
+    r.bogon ? h('p', null, r.bogon) : null);
+  const body = h('div', {class: 'summary-body'}, kv([
+    ['ASN', n.asn && [ext('https://bgp.tools/as/' + n.asn, 'AS' + n.asn), n.as_name ? ' – ' + n.as_name : '']],
+    ['AS 域名', n.as_domain],
+    ['IP 范围', mono(n.net_range || n.bgp_prefix || n.prefix)],
+    ['位置', places(r)],
+    ['IP 来源', nativeLine(r.native || {})],
+    ['IP 属性', h('div', {class: 'tags'},
+      v.type_label ? tag(v.type_label, hue) : null,
+      (v.usage_labels || []).map((l, i) => tag(l, HUE[v.usage?.[i]] ?? 4)),
+      conf ? h('span', {class: 'conf c' + conf[1]}, '置信度', h('i'), h('i'), h('i'), ' ' + conf[0]) : null)],
+  ]), h('p', {class: 'meta'},
+    h('span', null, r.mode === 'full' ? '完整查询' : '快速查询（仅离线库）'),
+    r.queried_at ? h('span', null, '查询于 ' + fmtTime(r.queried_at)) : null,
+    r.elapsed_ms != null ? h('span', null, `耗时 ${r.elapsed_ms} ms`) : null));
+  return h('section', {id: 'result', 'aria-busy': String(Boolean(pending && !failed && !r.bogon)),
+    class: hue == null ? 'card verdict' : 'card verdict hue', style: hue == null ? null : {'--h': hue}},
+    identity, scoreBox(r, r.bogon ? 'bogon' : failed ? 'error' : pending ? 'pending' : ''), body);
 }
 
 // Where the main databases place the address, one line each; ip2region only
@@ -153,7 +154,8 @@ function places(r) {
 
 // A successful request can still lack reputation evidence. Keep that distinct
 // from a measured clean result, and keep offline scores out of the pending UI.
-function scoreBox(s, state) {
+function scoreBox(r, state) {
+  const s = r.score || {};
   const waiting = state === 'pending', unavailable = s.data_status === 'unavailable';
   const unknown = waiting || state === 'error' || state === 'bogon' || unavailable;
   const v = unknown ? 0 : clamp(s.value), level = waiting ? '评估中…' : state === 'error' || unavailable ? '未能评估'
@@ -168,8 +170,67 @@ function scoreBox(s, state) {
       'aria-label': unknown ? level : `纯净度 ${v} 分，${level}`},
       h('b', {id: 'scoreValue'}, unknown ? '—' : String(v)), h('span', {id: 'scoreLevel'}, level)),
     h('span', {class: 'mut'}, '纯净度 ', h('span', {id: 'scoreTotal', hidden: state === 'bogon'}, '/100')),
-    !state && quality ? h('span', {class: 'score-data mut', title: '只统计实际返回安全字段或风险读数的信誉源；数据返回不代表安全保证。'}, quality + coverageText) : null);
+    !state && quality ? h('span', {class: 'score-data mut', title: '只统计实际返回安全字段或风险读数的信誉源；数据返回不代表安全保证。'}, quality + coverageText) : null,
+    h('button', {id: 'scoreDetailsToggle', type: 'button', class: 'btn score-details-toggle', disabled: state === 'pending' || !r.mode,
+      'aria-haspopup': 'dialog', 'aria-controls': 'scoreDetails', onclick: e => showScoreDetails(r, e.currentTarget)}, '评分详情'));
 }
+
+const SOURCE_STATUS = {ok: '已返回', empty: '无记录', error: '查询失败', timeout: '超时', quota: '配额不足', skipped: '未执行'};
+function clearScoreDetails() {
+  scoreDetailsOpener = null;
+  if (scoreDialog.open) scoreDialog.close();
+  scoreDetailsBody.replaceChildren();
+}
+function showScoreDetails(r, opener) {
+  const s = r.score || {}, unknown = r.bogon || s.data_status === 'unavailable' || r.mode !== 'full';
+  const factors = Array.isArray(s.factors) ? s.factors : [];
+  const risks = Array.isArray(r.risk) ? r.risk : [];
+  const dnsbl = Array.isArray(r.dnsbl) ? r.dnsbl : [];
+  const sources = Array.isArray(r.sources) ? r.sources : [];
+  const section = (title, ...children) => h('section', {class: 'score-detail-section'}, h('h3', null, title), children);
+  const rows = items => h('ul', {class: 'score-detail-list'}, items);
+  const signed = n => n > 0 ? '+' + n : String(n);
+  const info = kv([
+    ['本次 IP', mono(r.ip)],
+    ['检测时间', r.queried_at ? fmtTime(r.queried_at) : '未提供'],
+    ['纯净度', unknown ? '未能评估' : String(s.value) + ' / 100 · ' + (s.level || LEVEL(s.value))],
+    ['数据状态', {complete: '数据较充分', limited: '数据有限', unavailable: '数据不足'}[s.data_status] || (r.mode === 'full' ? '完整查询' : '仅离线数据')],
+  ]);
+  const factorList = factors.length ? rows(factors.map(f => h('li', null,
+    h('div', {class: 'score-detail-row'}, h('span', null, f.name), h('b', null, signed(f.delta) + ' 分')),
+    f.detail ? h('p', {class: 'mut'}, f.detail) : null)))
+    : empty(unknown ? '缺少有效数据，不能将基准 100 分当作已验证纯净。' : '本次没有达到扣分条件的项目。');
+  const riskList = risks.length ? rows(risks.map(x => {
+    const effective = Number.isInteger(x.effective_value) ? x.effective_value : x.value;
+    return h('li', null, h('div', {class: 'score-detail-row'}, h('b', null, x.source),
+      h('span', null, '原始风险 ' + x.value + ' / 100 → 计分 ' + effective + ' / 100')),
+      x.detail ? h('p', {class: 'mut'}, x.detail) : null,
+      x.scoring_note ? h('p', {class: 'mut'}, x.scoring_note) : null);
+  })) : empty('没有返回可计分的风险读数；未知观察不补成风险分。');
+  const dnsList = dnsbl.length ? rows(dnsbl.map(x => h('li', null,
+    h('div', {class: 'score-detail-row'}, h('b', {class: 'mono'}, x.zone), h('span', null, x.error ? '未能确认' : x.listed ? '命中' : '未命中')),
+    x.answer ? h('p', {class: 'mut'}, '返回码：', mono(x.answer)) : null,
+    x.error ? h('p', {class: 'mut'}, '错误：' + x.error) : null))) : empty('本次未执行 DNSBL 检查或此地址类型不适用。');
+  const sourceList = sources.length ? rows(sources.map(x => h('li', null,
+    h('div', {class: 'score-detail-row'}, h('b', null, x.name), h('span', null, SOURCE_STATUS[x.status] || x.status || '未知')),
+    h('p', {class: 'mut'}, [x.cached ? '缓存命中' : '', Number.isFinite(x.ms) ? x.ms + ' ms' : '',
+      x.reputation === true ? '返回有效信誉字段' : ''].filter(Boolean).join(' · ')),
+    x.note ? h('p', {class: 'mut'}, x.note) : null,
+    x.error ? h('p', {class: 'mut'}, '错误：' + x.error) : null))) : empty('本次没有来源明细。');
+  const countedRisk = risks.map(x => Number.isInteger(x.effective_value) && x.effective_value >= 0 && x.effective_value <= 100 ? x.effective_value : x.value)
+    .filter(x => Number.isInteger(x) && x >= 0 && x <= 100);
+  const meanRisk = countedRisk.length ? Math.floor(countedRisk.reduce((sum, x) => sum + x, 0) / countedRisk.length) : null;
+  const formula = meanRisk == null ? null : h('p', {class: 'mut'},
+    `本次计分风险均值 ${meanRisk}；均值除以 4 向下取整，额外扣 ${Math.floor(meanRisk / 4)} 分。代理、类型和 DNSBL 等项目另计。`);
+  scoreDetailsBody.replaceChildren(info,
+    section('扣分明细', h('p', {class: 'mut'}, '从 100 分开始扣减，结果限制在 0–100；未知或未完成的检测不显示虚构分数。'), factorList),
+    section('第三方风险数据', h('p', {class: 'mut'}, '风险值标准化到 0–100，越高表示风险越高。原始读数和实际计分值分别保留；信任分按相反方向归一化。'), formula, riskList),
+    section('DNSBL 检查', dnsList), section('本次检测来源', sourceList));
+  scoreDetailsOpener = opener;
+  scoreDialog.showModal();
+}
+$('#scoreDetailsClose').addEventListener('click', () => scoreDialog.close());
+scoreDialog.addEventListener('close', () => { if (scoreDetailsOpener?.isConnected) scoreDetailsOpener.focus(); });
 
 function nativeLine(n) {
   const reg = n.registered_country, geo = n.geo_country;
@@ -300,6 +361,7 @@ function render(r, pending = false, failed = false) {
 
 // Basic offline information can arrive first; only a full report supplies the score.
 async function lookup(ip, initialIP = '') {
+  clearScoreDetails();
   const my = ++seq, c = new AbortController();
   ctl?.abort(); ctl = c;
   input.value = ip; clearErr();

@@ -102,8 +102,11 @@ func (s *Set) one(ctx context.Context, p *Provider, q Query, o *Out) (st model.S
 		} else {
 			st.Status, st.Error = "error", err.Error()
 		}
-	} else if st.ReputationSource {
-		st.Reputation = reputationData(p.Name, raw, q.Addr)
+	} else {
+		st.Note = o.Hints()["source_note:"+p.Name]
+		if st.ReputationSource {
+			st.Reputation = reputationData(p.Name, raw, q.Addr)
+		}
 	}
 	return st
 }

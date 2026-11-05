@@ -32,11 +32,15 @@ type DNSBL struct {
 	Error  string `json:"error,omitempty"`
 }
 
-// Risk is a provider's risk figure normalised to 0..100, higher is worse.
+// Risk preserves a provider's risk figure normalised to 0..100, higher is worse.
+// EffectiveValue optionally records the value used by our scoring policy;
+// Value remains the original reading, not a claim that the address is safe.
 type Risk struct {
-	Source string `json:"source"`
-	Value  int    `json:"value"`
-	Detail string `json:"detail,omitempty"`
+	Source         string `json:"source"`
+	Value          int    `json:"value"`
+	Detail         string `json:"detail,omitempty"`
+	EffectiveValue *int   `json:"effective_value,omitempty"`
+	ScoringNote    string `json:"scoring_note,omitempty"`
 }
 
 // Ports comes from Shodan InternetDB.
@@ -55,6 +59,7 @@ type Source struct {
 	Status           string `json:"status"` // ok | empty | error | timeout | skipped | quota
 	Ms               int64  `json:"ms"`
 	Error            string `json:"error,omitempty"`
+	Note             string `json:"note,omitempty"`
 	Cached           bool   `json:"cached,omitempty"`
 	ReputationSource bool   `json:"reputation_source,omitempty"` // applicable provider can return reputation data
 	Reputation       bool   `json:"reputation,omitempty"`        // this answer actually included valid reputation fields

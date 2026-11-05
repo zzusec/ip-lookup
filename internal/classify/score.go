@@ -90,7 +90,11 @@ func Score(r *model.Result) model.Score {
 	if len(r.Risk) > 0 {
 		sum := 0
 		for _, x := range r.Risk {
-			sum += x.Value
+			value := x.Value
+			if x.EffectiveValue != nil && *x.EffectiveValue >= 0 && *x.EffectiveValue <= 100 {
+				value = *x.EffectiveValue
+			}
+			sum += value
 		}
 		add(fmt.Sprintf("第三方风险分均值 %d", sum/len(r.Risk)), -sum/len(r.Risk)/4)
 	}

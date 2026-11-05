@@ -52,8 +52,8 @@ func TestRiskProviderScores(t *testing.T) {
 		{"fraud without match", ipyou, `{"proxy_info":{"found":false,"fraud_score":18}}`, nil, false},
 		{"both real scores", ipyou, `{"ip_score":{"score":0},"proxy_info":{"found":true,"fraud_score":18}}`, []int{0, 18}, false},
 		{"greynoise malicious", func() *Provider { return greynoise("") }, `{"noise":true,"classification":"malicious"}`, []int{90}, false},
-		{"greynoise unknown", func() *Provider { return greynoise("") }, `{"noise":true,"classification":"unknown"}`, []int{50}, false},
-		{"greynoise benign", func() *Provider { return greynoise("") }, `{"noise":true,"classification":"benign"}`, []int{10}, false},
+		{"greynoise unknown", func() *Provider { return greynoise("") }, `{"noise":true,"classification":"unknown"}`, nil, false},
+		{"greynoise benign", func() *Provider { return greynoise("") }, `{"noise":true,"classification":"benign"}`, nil, false},
 		{"greynoise missing classification", func() *Provider { return greynoise("") }, `{"noise":true}`, nil, false},
 		{"greynoise unexpected classification", func() *Provider { return greynoise("") }, `{"noise":true,"classification":"unclassified"}`, nil, false},
 		{"greynoise riot", func() *Provider { return greynoise("") }, `{"riot":true}`, nil, false},
@@ -187,7 +187,9 @@ func TestReputationDataScope(t *testing.T) {
 		{"GreyNoise", `{"riot":true}`, true},
 		{"GreyNoise", `{"riot":true,"classification":"unexpected"}`, true},
 		{"GreyNoise", `{"noise":true,"classification":"malicious"}`, true},
-		{"GreyNoise", `{"noise":false,"classification":"unknown"}`, true},
+		{"GreyNoise", `{"noise":false,"classification":"unknown"}`, false},
+		{"GreyNoise", `{"noise":true,"riot":false,"classification":"unknown"}`, false},
+		{"GreyNoise", `{"noise":true,"riot":true,"classification":"unknown"}`, true},
 		{"unknown-provider", `{"proxy":false,"noise":true,"classification":"malicious","privacy":{"proxy":false},"intel_summary":{"is_proxy":false},"ip_score":{"score":0}}`, false},
 	}
 	for _, c := range cases {

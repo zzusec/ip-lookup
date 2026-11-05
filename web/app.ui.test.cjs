@@ -68,7 +68,8 @@ function report(ip, value = ip === TARGET ? 42 : 85) {
     ip, version: ip.includes(':') ? 6 : 4, mode: 'full', queried_at: '2026-11-05T07:00:00Z', elapsed_ms: 12,
     verdict: {type: 'cdn', type_label: 'CDN', label: 'CDN', confidence: 'high',
       evidence: [{kind: 'cdn', source: 'Fixture Evidence Source', detail: 'Fixture Evidence Detail', weight: 15}]},
-    score: {value, level: value >= 80 ? '纯净' : '中性', factors: [{name: 'Fixture Score Deduction', delta: -15}]},
+    score: {value, level: value >= 95 ? '极度纯净' : value >= 80 ? '纯净' : value >= 50 ? '良好' : value >= 25 ? '中性' : '可疑',
+      factors: [{name: 'Fixture Score Deduction', delta: -15}]},
     flags: {is_cdn: true},
     native: {status: 'native', label: '原生 IP', registered_country: 'AU', geo_country: 'AU', registry: 'Fixture Registry'},
     geo: {country: 'Fixture Country', country_code: 'AU', region: 'Fixture Region', city: 'Fixture City', lat: 0, lon: 0},
@@ -78,7 +79,17 @@ function report(ip, value = ip === TARGET ? 42 : 85) {
       {source: 'Merged-IP', country: 'Fixture Country', country_code: 'AU', region: 'Fixture Region', city: 'Fixture City'},
       {source: 'Fixture Hidden Geolocation Source', country: 'Fixture Hidden Geolocation Country'},
     ],
-    sources: [{name: 'Fixture Provider Source', status: 'ok'}],
+    risk: [{source: 'Fixture Provider Source', value: 0, detail: 'Fixture Risk Detail'}],
+    dnsbl: [
+      {zone: 'clean.fixture.test', listed: false},
+      {zone: 'error.fixture.test', listed: false, error: 'Fixture DNSBL Timeout'},
+    ],
+    sources: [
+      {name: 'Fixture Provider Source', kind: 'online', status: 'ok', ms: 8, reputation_source: true, reputation: true},
+      {name: 'Fixture Failed Source', kind: 'online', status: 'timeout', ms: 12,
+        error: 'Fixture Source Timeout', reputation_source: true},
+      {name: 'DNSBL', kind: 'dns', status: 'ok', ms: 3},
+    ],
   };
 }
 
@@ -89,9 +100,9 @@ function locatedReport(ip, value) {
   return {...result, geo: {...result.geo, lat: -33.86, lon: 151.2, accuracy_km: 10}};
 }
 
-async function fixture({width = 1440, colorScheme = 'light', javascriptEnabled = true,
+async function fixture({width = 1440, height = width === 393 ? 852 : 900, colorScheme = 'light', javascriptEnabled = true,
   lookup = ip => ({json: report(ip)}), clipboardOK = true} = {}) {
-  const context = await browser.newContext({viewport: {width, height: width === 393 ? 852 : 900},
+  const context = await browser.newContext({viewport: {width, height},
     colorScheme, javaScriptEnabled: javascriptEnabled, timezoneId: 'Asia/Shanghai'});
   const page = await context.newPage();
   page.setDefaultTimeout(5000);
@@ -175,6 +186,16 @@ async function submit(page, ip) {
   await page.locator('#q').evaluate(form => form.requestSubmit());
 }
 
+async function openScoreDetails(page) {
+  const toggle = page.locator('#scoreDetailsToggle');
+  assert.equal(await toggle.evaluate(button => button.tagName), 'BUTTON');
+  assert.equal((await toggle.innerText()).trim(), '评分详情');
+  assert.equal(await toggle.isEnabled(), true);
+  await toggle.click();
+  await page.locator('#scoreDetails').waitFor({state: 'visible'});
+  assert.equal(await page.locator('#scoreDetails').evaluate(dialog => dialog instanceof HTMLDialogElement && dialog.open), true);
+}
+
 async function onlyExpectedTraffic(f, {map = false} = {}) {
   if (map) {
     assert.ok(f.external.every(url => /^https:\/\/tile\.openstreetmap\.org\/\d+\/\d+\/\d+\.png$/.test(url)),
@@ -193,10 +214,10 @@ async function onlyExpectedTraffic(f, {map = false} = {}) {
   assert.deepEqual(f.errors, []);
 }
 
-async function screenshot(page, name) {
+async function screenshot(page, name, {fullPage = true} = {}) {
   if (!process.env.IP_LOOKUP_SCREENSHOTS) return;
   await mkdir(process.env.IP_LOOKUP_SCREENSHOTS, {recursive: true});
-  await page.screenshot({path: join(process.env.IP_LOOKUP_SCREENSHOTS, name + '.png'), fullPage: true});
+  await page.screenshot({path: join(process.env.IP_LOOKUP_SCREENSHOTS, name + '.png'), fullPage});
 }
 
 test('the server-rendered IP is readable before JavaScript runs', async () => {
@@ -224,6 +245,9 @@ test('fast lookup shows the upper report while its purity rating waits for the f
     await textIs(f.page, '#scoreValue', '—');
     assert.match(await f.page.locator('#scoreLevel').innerText(), /^评估中/);
     assert.equal(await f.page.locator('#result').getAttribute('aria-busy'), 'true');
+    assert.equal(await f.page.locator('#scoreDetailsToggle').isEnabled(), false,
+      'an incomplete assessment must not open stale score details');
+    assert.equal(await f.page.locator('#scoreDetails').isVisible(), false);
     assert.deepEqual(f.lookups().map(({url}) => url.searchParams.get('mode')).sort(), ['fast', 'full']);
     assert.equal(f.ipRequests().length, 0, 'an IP already rendered by the server needs no extra discovery request');
     await screenshot(f.page, 'loading');
@@ -256,22 +280,168 @@ test('the upper report shows IP type, geography and network while the removed lo
     assert.match(visibleText, /Fixture Country/);
     assert.match(visibleText, /Fixture Network Name/);
     assert.match(visibleText, /Fixture ISP/);
-    const bodyText = await f.page.locator('body').textContent();
-    assert.doesNotMatch(bodyText, /Fixture (?:Evidence|Score Deduction|Hidden Geolocation|Provider Source)/,
-      'the removed lower sections must not be rendered into hidden result panels');
-    assert.doesNotMatch(await f.page.locator('footer').textContent(), /Merged-IP|IP Geolocation by DB-IP|OpenStreetMap/,
-      'the removed long attribution sentence must not remain in the footer');
-    assert.equal(await f.page.locator('table, #connection, .map, .mapcard, .factors').count(), 0);
+    assert.doesNotMatch(visibleText, /Fixture (?:Evidence|Score Deduction|Hidden Geolocation|Provider Source)/,
+      'score deductions and source details appear only after opening score details');
+    assert.doesNotMatch(await f.page.locator('#out').textContent(), /Fixture (?:Evidence|Score Deduction|Hidden Geolocation|Provider Source)/,
+      'removed lower panels must not be hidden inside the main report');
+    assert.equal(await f.page.locator('#out table, #connection, #out .map, #out .mapcard, #out .factors, #evidenceCard').count(), 0);
     assert.doesNotMatch(visibleText, /判定依据|多源地理|我的连接|连接明细|扣分|CC BY/);
-    const attribution = f.page.locator('#attribution');
     assert.equal(await f.page.locator('details').count(), 0, 'removed content must not be kept in collapsed panels');
-    await textIs(f.page, '#attribution', '数据说明');
-    assert.equal(await attribution.evaluate(link => link.tagName), 'A');
-    assert.match(await attribution.getAttribute('href'), /github\.com\/zzusec\/ip-lookup.*(?:README|来源|许可|#)/);
-    assert.equal(await attribution.isVisible(), true);
+    assert.equal(await f.page.locator('footer, #attribution').count(), 0);
+    assert.equal(await f.page.getByText('数据说明', {exact: true}).count(), 0,
+      'the data attribution entry has been removed from the page');
+    assert.equal(await f.page.locator('#scoreDetails').isVisible(), false);
+    assert.equal(await f.page.locator('#scoreDetails').evaluate(dialog => dialog.closest('#out')), null,
+      'the native dialog must survive result replacement outside #out');
     assert.equal(f.lookups().length, 2);
     await onlyExpectedTraffic(f);
   } finally { await f.close(); }
+});
+
+test('score details explain deductions, normalised risks, DNSBL results and source status in a dismissible dialog', async () => {
+  const f = await fixture({lookup: ip => {
+    const result = report(ip, 70);
+    result.score.factors = [
+      {name: 'Fixture Score Deduction', delta: -15},
+      {name: 'DNSBL 命中 1 个', delta: -5},
+      {name: '第三方风险分均值 40', delta: -10},
+    ];
+    result.score.data_status = 'limited';
+    result.score.coverage = {received: 1, total: 2};
+    Object.assign(result.risk[0], {value: 60, effective_value: 40, scoring_note: 'Fixture Risk Scoring Note'});
+    result.dnsbl.unshift({zone: 'listed.fixture.test', listed: true, answer: '127.0.0.2'});
+    result.sources[1].status = 'quota';
+    result.sources[1].error = 'Fixture Source Error';
+    result.sources[0].note = 'Fixture Source Note';
+    return {json: result};
+  }});
+  try {
+    await f.page.goto(origin + '/' + TARGET);
+    await settled(f.page, TARGET, 70);
+    assert.equal(await f.page.locator('#scoreDetails').isVisible(), false);
+    assert.doesNotMatch(await f.page.locator('body').innerText(), /Fixture Score Deduction|listed\.fixture\.test/);
+    await openScoreDetails(f.page);
+    const details = await f.page.locator('#scoreDetailsBody').innerText();
+    assert.ok(details.includes(TARGET), 'the detail view identifies the currently assessed IP');
+    assert.match(details, /70/);
+    assert.match(details, /Fixture Score Deduction/);
+    assert.match(details, /-15|−15/);
+    assert.match(details, /DNSBL 命中 1 个/);
+    assert.match(details, /-5|−5/);
+    assert.match(details, /第三方风险分均值 40/);
+    assert.match(details, /-10|−10/);
+    assert.match(details, /Fixture Provider Source/);
+    assert.match(details, /Fixture Risk Detail/);
+    assert.match(details, /60\s*\/\s*100/);
+    assert.match(details, /40\s*\/\s*100/);
+    assert.match(details, /Fixture Risk Scoring Note/);
+    assert.match(details, /计分风险均值\s*40/);
+    assert.match(details, /4.*取整.*扣\s*10\s*分/);
+    assert.match(details, /标准化|归一化/);
+    assert.match(details, /越高.{0,12}(?:风险|危险)|风险.{0,12}越高/);
+    assert.match(details, /listed\.fixture\.test/);
+    assert.match(details, /127\.0\.0\.2/);
+    assert.match(details, /clean\.fixture\.test/);
+    assert.match(details, /未命中/);
+    assert.match(details, /error\.fixture\.test/);
+    assert.match(details, /Fixture DNSBL Timeout/);
+    assert.match(details, /Fixture Failed Source/);
+    assert.match(details, /Fixture Source Error/);
+    assert.match(details, /Fixture Source Note/);
+    assert.match(details, /配额|额度|quota/);
+    assert.match(details, /数据有限/);
+    await screenshot(f.page, 'details', {fullPage: false});
+    await f.page.keyboard.press('Escape');
+    await f.page.locator('#scoreDetails').waitFor({state: 'hidden'});
+    assert.equal(await f.page.evaluate(() => document.activeElement?.id), 'scoreDetailsToggle');
+    await openScoreDetails(f.page);
+    assert.equal(await f.page.locator('#scoreDetailsClose').evaluate(button => button.tagName), 'BUTTON');
+    await f.page.locator('#scoreDetailsClose').click();
+    await f.page.locator('#scoreDetails').waitFor({state: 'hidden'});
+    assert.equal(await f.page.evaluate(() => document.activeElement?.id), 'scoreDetailsToggle');
+    await settled(f.page, TARGET, 70);
+    await onlyExpectedTraffic(f);
+  } finally { await f.close(); }
+});
+
+test('score details treat provider names, risk details and errors as text', async () => {
+  const source = '<img src=x onerror="window.__scoreInjected=true">';
+  const riskDetail = '<script>window.__scoreInjected=true</script>';
+  const sourceError = '<svg onload="window.__scoreInjected=true">Source error</svg>';
+  const dnsError = '<img src=x onerror="window.__scoreInjected=true">DNS error';
+  const f = await fixture({lookup: ip => {
+    const result = report(ip, 70);
+    result.score.factors.push({name: '第三方风险分均值 60', delta: -15});
+    result.risk = [{source, value: 60, detail: riskDetail}];
+    result.dnsbl = [{zone: 'unsafe.fixture.test', listed: false, error: dnsError}];
+    result.sources = [{name: source, kind: 'online', status: 'error', error: sourceError}];
+    return {json: result};
+  }});
+  try {
+    await f.page.goto(origin);
+    await settled(f.page, SELF, 70);
+    await openScoreDetails(f.page);
+    const details = await f.page.locator('#scoreDetailsBody').innerText();
+    for (const literal of [source, riskDetail, sourceError, dnsError]) assert.ok(details.includes(literal));
+    assert.equal(await f.page.locator('#scoreDetailsBody img, #scoreDetailsBody svg, #scoreDetailsBody script, #scoreDetailsBody [onerror], #scoreDetailsBody [onload]').count(), 0);
+    assert.equal(await f.page.evaluate(() => window.__scoreInjected), undefined);
+    await onlyExpectedTraffic(f);
+  } finally { await f.close(); }
+});
+
+test('legacy score factors remain readable when optional risk and DNSBL fields are absent', async () => {
+  const f = await fixture({lookup: ip => {
+    const result = report(ip);
+    delete result.risk;
+    delete result.dnsbl;
+    return {json: result};
+  }});
+  try {
+    await f.page.goto(origin);
+    await settled(f.page, SELF, 85);
+    await openScoreDetails(f.page);
+    const details = await f.page.locator('#scoreDetailsBody').innerText();
+    assert.match(details, /Fixture Score Deduction/);
+    assert.match(details, /-15|−15/);
+    assert.match(details, /风险/);
+    assert.match(details, /DNSBL/);
+    assert.match(details, /暂无|没有|未返回|未提供/);
+    await onlyExpectedTraffic(f);
+  } finally { await f.close(); }
+});
+
+test('a new lookup closes and clears score details before showing the next IP assessment', async () => {
+  const next = deferred();
+  const perIP = ip => {
+    const result = report(ip, 85);
+    result.score.factors = [{name: ip === SELF ? 'Previous IP deduction' : 'Current IP deduction', delta: -15}];
+    return result;
+  };
+  const f = await fixture({lookup: (ip, {url}) => ip === TARGET && url.searchParams.get('mode') === 'full'
+    ? next.promise : {json: perIP(ip)}});
+  try {
+    await f.page.goto(origin);
+    await settled(f.page, SELF, 85);
+    await openScoreDetails(f.page);
+    assert.match(await f.page.locator('#scoreDetailsBody').innerText(), /Previous IP deduction/);
+    // A browser navigation or external query can start while a modal is open.
+    await f.page.locator('#qi').evaluate((input, ip) => {
+      input.value = ip;
+      input.form.requestSubmit();
+    }, TARGET);
+    await f.page.locator('#scoreDetails').waitFor({state: 'hidden'});
+    assert.equal((await f.page.locator('#scoreDetailsBody').textContent()).trim(), '',
+      'the old detail snapshot must be removed as soon as the query changes');
+    assert.equal(await f.page.locator('#scoreDetailsToggle').isEnabled(), false);
+    next.resolve({json: perIP(TARGET)});
+    await settled(f.page, TARGET, 85);
+    await openScoreDetails(f.page);
+    const details = await f.page.locator('#scoreDetailsBody').innerText();
+    assert.ok(details.includes(TARGET));
+    assert.match(details, /Current IP deduction/);
+    assert.doesNotMatch(details, /Previous IP deduction|1\.1\.1\.1/);
+    await onlyExpectedTraffic(f);
+  } finally { next.resolve({json: perIP(TARGET)}); await f.close(); }
 });
 
 test('input validation, lookup, back/forward navigation and repeated self lookup preserve the selected IP', async () => {
@@ -341,6 +511,8 @@ test('查我的 IP shows its fast report while the full purity assessment is pen
 
 test('changing the query aborts the previous fetch and a late report cannot mix its IP or score into the result', async () => {
   const stale = deferred();
+  const oldReport = {...report(SELF, 99), score: {value: 99, level: '极度纯净',
+    factors: [{name: 'Stale score factor must stay absent', delta: -1}]}};
   const f = await fixture({lookup: ip => ip === SELF ? stale.promise : {json: report(ip, 42)}});
   try {
     await f.page.goto(origin);
@@ -356,14 +528,20 @@ test('changing the query aborts the previous fetch and a late report cannot mix 
       });
       return old.length === 2 && old.every(({aborted}) => aborted);
     });
-    stale.resolve({json: report(SELF, 99)});
+    await openScoreDetails(f.page);
+    stale.resolve({json: oldReport});
     await Promise.all(oldRequests.map(request => request.done));
     // Cross a rendering boundary after the old response handler has had a chance to settle.
     await f.page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     await settled(f.page, TARGET, 42);
     assert.equal(new URL(f.page.url()).pathname, '/' + TARGET);
+    assert.equal(await f.page.locator('#scoreDetails').isVisible(), true);
+    const details = await f.page.locator('#scoreDetailsBody').innerText();
+    assert.ok(details.includes(TARGET));
+    assert.doesNotMatch(details, /Stale score factor must stay absent|1\.1\.1\.1/,
+      'a late response must not overwrite the currently open detail snapshot');
     await onlyExpectedTraffic(f);
-  } finally { stale.resolve({json: report(SELF, 99)}); await f.close(); }
+  } finally { stale.resolve({json: oldReport}); await f.close(); }
 });
 
 test('a late fast self report cannot replace a newer explicit query', async () => {
@@ -431,6 +609,11 @@ test('score data status distinguishes missing risk data from limited and suffici
       const result = report(ip, value);
       result.score.data_status = dataStatus;
       result.score.coverage = {received: dataStatus === 'complete' ? 2 : dataStatus === 'limited' ? 1 : 0, total: 2};
+      if (dataStatus === 'unavailable') {
+        result.score.factors = [];
+        result.risk = [];
+        result.sources[0] = {...result.sources[0], status: 'empty', reputation: false};
+      }
       return {json: result};
     }});
     try {
@@ -445,6 +628,12 @@ test('score data status distinguishes missing risk data from limited and suffici
           'no successful risk data must not be presented as a perfect rating');
       }
       assert.equal(await f.page.getByText('Fixture Network Name', {exact: true}).first().isVisible(), true);
+      await openScoreDetails(f.page);
+      const details = await f.page.locator('#scoreDetailsBody').innerText();
+      assert.ok(details.includes(TARGET));
+      assert.ok(details.includes(note));
+      if (dataStatus === 'unavailable') assert.match(details, /未能评估|没有|缺少|未返回|不足/,
+        'an unknown rating still explains its missing reputation data');
       await onlyExpectedTraffic(f);
     } finally { await f.close(); }
   }
@@ -502,9 +691,16 @@ test('copying the displayed IP gives success or failure feedback', async () => {
   }
 });
 
-for (const [name, width, colorScheme] of [['desktop', 1440, 'light'], ['mobile', 393, 'light'], ['dark', 1440, 'dark']]) {
+for (const [name, width, height, colorScheme] of [
+  ['desktop', 1440, 900, 'light'], ['mobile', 393, 852, 'light'],
+  ['mobile-short', 390, 664, 'light'], ['dark', 1440, 900, 'dark'],
+]) {
   test(`${name}: a long IPv6 address remains readable without horizontal page overflow`, async () => {
-    const f = await fixture({width, colorScheme, lookup: ip => ({json: locatedReport(ip)})});
+    const f = await fixture({width, height, colorScheme, lookup: ip => {
+      const result = locatedReport(ip);
+      result.network.as_name = 'Fixture Network Name ' + 'Long Network Organization '.repeat(12);
+      return {json: result};
+    }});
     try {
       await f.page.goto(origin + '/' + V6);
       await settled(f.page, V6, 85);
@@ -512,8 +708,11 @@ for (const [name, width, colorScheme] of [['desktop', 1440, 'light'], ['mobile',
       assert.equal(await f.page.locator('#ipAddress').isVisible(), true);
       const dimensions = await f.page.evaluate(() => {
         const ip = document.querySelector('#ipAddress'), root = document.documentElement;
-        const bounds = ip.getBoundingClientRect();
-        return {viewport: root.clientWidth, pageWidth: root.scrollWidth, left: bounds.left, right: bounds.right,
+        const bounds = ip.getBoundingClientRect(), ring = document.querySelector('#score .ring').getBoundingClientRect();
+        const toggle = document.querySelector('#scoreDetailsToggle').getBoundingClientRect();
+        return {viewport: root.clientWidth, pageWidth: root.scrollWidth, height: innerHeight,
+          left: bounds.left, right: bounds.right, ipTop: bounds.top, ipBottom: bounds.bottom,
+          ringTop: ring.top, ringBottom: ring.bottom, toggleBottom: toggle.bottom,
           ipWidth: ip.clientWidth, ipContentWidth: ip.scrollWidth,
           dark: matchMedia('(prefers-color-scheme: dark)').matches};
       });
@@ -521,7 +720,26 @@ for (const [name, width, colorScheme] of [['desktop', 1440, 'light'], ['mobile',
       assert.ok(dimensions.left >= 0 && dimensions.right <= dimensions.viewport, 'the complete IP element must fit on screen');
       assert.ok(dimensions.ipContentWidth <= dimensions.ipWidth + 1, 'the IP must wrap or scale rather than clip inside its own element');
       assert.equal(dimensions.dark, colorScheme === 'dark');
+      if (width <= 393) {
+        assert.ok(dimensions.ipTop >= 0 && dimensions.ipBottom < dimensions.height,
+          `${width}×${height}: the entire IP stays in the first screen`);
+        assert.ok(dimensions.ringTop >= 0 && dimensions.ringBottom < dimensions.height,
+          `${width}×${height}: the purity ring stays in the first screen even with a long IP and ASN name`);
+        assert.ok(dimensions.toggleBottom < dimensions.height, 'the score detail action is available in the first screen');
+      }
       await screenshot(f.page, name);
+      if (name === 'mobile') {
+        await openScoreDetails(f.page);
+        const modal = await f.page.locator('#scoreDetails').evaluate(dialog => {
+          const bounds = dialog.getBoundingClientRect(), root = document.documentElement;
+          return {left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom,
+            width: root.clientWidth, height: innerHeight, pageWidth: root.scrollWidth};
+        });
+        assert.ok(modal.left >= 0 && modal.right <= modal.width, 'the mobile dialog fits the viewport width');
+        assert.ok(modal.top >= 0 && modal.bottom <= modal.height, 'long details scroll within the mobile dialog');
+        assert.equal(modal.pageWidth, modal.width);
+        await screenshot(f.page, 'details-mobile', {fullPage: false});
+      }
       await onlyExpectedTraffic(f, {map: true});
     } finally { await f.close(); }
   });

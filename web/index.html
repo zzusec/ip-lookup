@@ -27,13 +27,14 @@
   <div id="status" class="status" aria-live="polite"></div>
   <div id="out">
     <section id="result" class="card verdict" aria-busy="true">
-      <div><div class="v-ip"><h1 id="ipAddress">__IP_ADDRESS__</h1></div><p class="v-label">识别中…</p></div>
+      <div class="summary-identity"><div class="v-ip"><h1 id="ipAddress">__IP_ADDRESS__</h1></div><p class="v-label">识别中…</p></div>
       <div id="score" class="score"><div class="ring wait" style="--v:0;--h:200"><b id="scoreValue">—</b><span id="scoreLevel">评估中…</span></div><span class="mut">纯净度 <span id="scoreTotal">/100</span></span></div>
     </section>
   </div>
 </main>
-<footer class="wrap foot">
-  <a id="attribution" href="https://github.com/zzusec/ip-lookup#数据来源与许可" target="_blank" rel="noopener noreferrer">数据说明</a>
-</footer>
+<dialog id="scoreDetails" aria-labelledby="scoreDetailsTitle">
+  <div class="score-detail-head"><h2 id="scoreDetailsTitle">评分详情</h2><button id="scoreDetailsClose" type="button" class="btn" aria-label="关闭评分详情">关闭</button></div>
+  <div id="scoreDetailsBody"></div>
+</dialog>
 </body>
 </html>

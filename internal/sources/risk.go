@@ -178,7 +178,16 @@ func ipyou() *Provider {
 			}
 			o.Do(func(r *model.Result) {
 				if validRiskScore(d.Score.Score) {
-					r.Risk = append(r.Risk, model.Risk{Source: "ipyou.net", Value: *d.Score.Score, Detail: "等级 " + d.Score.Level})
+					risk := model.Risk{Source: "ipyou.net", Value: *d.Score.Score, Detail: "等级 " + d.Score.Level}
+					// ipyou documents scores below 20 as its lowest-risk range.
+					// Our policy does not add a deduction for that normal range;
+					// this is not a provider guarantee of safety or a score of 100.
+					if *d.Score.Score < 20 {
+						effective := 0
+						risk.EffectiveValue = &effective
+						risk.ScoringNote = "来源标为极低风险，仅参考，不作额外扣分；已确认风险仍独立计分"
+					}
+					r.Risk = append(r.Risk, risk)
 				}
 				if d.ProxyInfo.Found && validRiskScore(d.ProxyInfo.FraudScore) {
 					r.Risk = append(r.Risk, model.Risk{Source: "IP2Proxy 欺诈分（经 ipyou.net）", Value: *d.ProxyInfo.FraudScore})
@@ -217,22 +226,30 @@ func greynoise(key string) *Provider {
 				return ErrNotFound
 			}
 			detail := strings.TrimSpace(d.Classification + " " + d.Name)
+			var notes []string
 			if d.Riot {
 				o.Signal("public_service", "GreyNoise", "RIOT: "+d.Name, 60)
+				notes = append(notes, "来源标注为已知公共服务（RIOT）")
 			}
 			if d.Noise {
-				v, known := map[string]int{"malicious": 90, "unknown": 50, "benign": 10}[d.Classification]
-				if d.Classification == "malicious" {
+				switch d.Classification {
+				case "malicious":
 					o.Signal("abuser", "GreyNoise", "正在扫描互联网："+detail, 70)
-				}
-				if d.Classification == "benign" && d.Name != "" {
-					o.Signal("crawler", "GreyNoise", "良性扫描："+d.Name, 50)
-				}
-				if known {
 					o.Do(func(r *model.Result) {
-						r.Risk = append(r.Risk, model.Risk{Source: "GreyNoise", Value: v, Detail: detail + " " + d.LastSeen})
+						r.Risk = append(r.Risk, model.Risk{Source: "GreyNoise", Value: 90, Detail: detail + " " + d.LastSeen})
 					})
+				case "benign":
+					if d.Name != "" {
+						o.Signal("crawler", "GreyNoise", "良性扫描："+d.Name, 50)
+					}
+					notes = append(notes, "来源标注为良性扫描活动，不据此增加风险分")
+				default:
+					// Observing a scan does not establish malicious or benign intent.
+					notes = append(notes, "观察到扫描活动，来源分类未知；未据此认定恶意或判定安全")
 				}
+			}
+			if len(notes) > 0 {
+				o.Hint("source_note:GreyNoise", strings.Join(notes, "；"))
 			}
 			return nil
 		}}

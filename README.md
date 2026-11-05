@@ -12,11 +12,11 @@ curl ip.example.com/json/8.8.8.8 # 完整 JSON
 
 ## 工作方式
 
-页面上半部分保留 IP 类型摘要：IP 地址、ASN、AS 域名、IP 范围、位置、原生或广播、IP 属性及置信度、纯净度；下方保留地理位置、位置地图和网络资料。支持输入其他 IP、查我的 IP、复制地址。
+页面上半部分保留 IP 类型摘要：IP 地址、ASN、AS 域名、IP 范围、位置、原生或广播、IP 属性及置信度、纯净度；下方保留地理位置、位置地图和网络资料。手机上 IP 与评分圆环并排放在首屏，较长的网络资料排在下方。支持输入其他 IP、查我的 IP、复制地址。
 
 Go 在首屏直接输出 IP，不等待在线评分，页面响应使用 `Cache-Control: private, no-store`。浏览器并发发起 `fast` 与 `full` 查询，先用快速查询呈现离线基础资料，再以完整结果更新。纯净度等待 `full` 结果，不先显示预设的 100 分；完整查询失败时保留 IP 和已经取得的基础资料，并将纯净度显示为未知（页面文案为“未能评估”）。
 
-下方独立的多源地理对照、判定依据、连接探测明细和纯净度扣分列表不在页面展示。底部不再显示大段来源和地图说明，只保留小型“数据说明”链接入口；完整来源与许可列在本文末尾。后端保留类型判断、地理与网络资料、风险分析和原有扣分数学，评分新增数据可用性处理。API 与 curl 纯文本继续提供详细结果；各数据源的响应状态和耗时在 API 结果的 `sources` 字段里。
+下方独立的多源地理对照、判定依据、连接探测明细和纯净度扣分列表不在主页面展示。底部“数据说明”入口及长来源说明已移除；完整来源与许可列在本文末尾。点击评分区的“评分详情”可查看本次 IP、扣分明细、原始风险读数和实际计分值、DNSBL 返回码与错误，以及来源状态和观察说明。详情按需打开，可关闭或按 Escape 返回；切换查询会关闭并清空旧详情。后端保留类型判断、地理与网络资料、风险分析和原有扣分数学，评分新增数据可用性处理。API 与 curl 纯文本继续提供详细结果；各数据源的响应状态和耗时在 API 结果的 `sources` 字段里。
 
 首页不加载连接检测脚本，不自动执行 STUN 或向 ChatGPT、Claude 等目标发起连接探测。有效经纬度可用时，地图按需加载本站提供的 Leaflet 组件，并请求 OpenStreetMap 图块；地图仍会产生浏览器端的第三方请求，署名保留在地图控件中。
 
@@ -55,7 +55,11 @@ Go 在首屏直接输出 IP，不等待在线评分，页面响应使用 `Cache-
 
 完整查询至少有两个有效信誉源，且本轮请求涉及的相关信誉源全部返回有效数据时，状态才为 `complete`；只有一个有效源也属于 `limited`。没有有效信誉数据且无既有扣分证据时为 `unavailable`；已有离线风险、机房等扣分证据时，可保留数值并标记 `limited`。
 
-原有扣分数学及 JSON 的 `score.value`、`score.level`、`score.factors` 保留兼容，客户端须优先检查 `data_status`：`unavailable` 下的数值基线并非实测结果，不能解释为满分安全。网页和 curl 在此时显示未知，页面使用“未能评估 / 数据不足”；`limited` 标记“数据有限”。评分环下只显示一行数据状态与有效 / 本轮信誉源数，不增加明细。覆盖状态表示数据可用程度，不是安全保证。
+JSON 的 `score.value`、`score.level`、`score.factors` 保留兼容，客户端须优先检查 `data_status`：`unavailable` 下的数值基线并非实测结果，不能解释为满分安全。网页和 curl 在此时显示未知，页面使用“未能评估 / 数据不足”；`limited` 标记“数据有限”。评分环下显示一行数据状态与有效 / 本轮信誉源数；详细扣分和原始数据放在按需打开的“评分详情”中。覆盖状态表示数据可用程度，不是安全保证。
+
+风险计分保留原始读数，并区分来源语义：GreyNoise 的 `unknown` 只表示观察到扫描、尚未判定恶意或安全，不生成固定风险 50，也不算有效的干净信誉检查；`benign` 不因良性活动生成风险 10；`malicious` 仍保留风险 90 和滥用证据。观察说明通过 `sources[].note` 提供。参见 [GreyNoise 分类说明](https://docs.greynoise.io/docs/understanding-greynoise-classifications)。
+
+ipyou 官方将风控值低于 20 列为极度纯净区间。本项目在该区间保留 `risk[].value` 原始读数，并以 `effective_value: 0` 表示不再额外扣分，`scoring_note` 解释原因；20 起、其他来源和 IP2Proxy 风险仍沿用原计分。此处是本项目的计分策略，不是对移动网络固定满分的承诺。已确认的代理、VPN、机房、恶意活动或黑名单仍会独立扣分。参见 [ipyou 风控值说明](https://ipyou.net/zh/wiki/ip-risk-score)。
 
 “缺少证据时不假报 100 分”的处理参考 [LinXiaoTao/FuckClaude](https://github.com/LinXiaoTao/FuckClaude) 的思路，由本项目自行实现，未复制其代码，也未引入浏览器指纹“中国用户分”、账号解锁推断或新的 API key。
 
@@ -98,13 +102,13 @@ node --test web/connection.test.cjs
 node --test web/app.ui.test.cjs
 ```
 
-浏览器测试需要已安装的 Playwright 与 Chromium；支持通过 `CHROMIUM_PATH` 指定浏览器，不自动下载依赖。首页测试使用合成数据验证首屏 IP、摘要与地理及网络资料、纯净度等待、失败及数据可用性状态、查询与复制操作、连接探测不自动运行、地图按需加载及 393px 手机布局。独立连接模块另用合成响应验证观测与判定逻辑；测试夹具不保证真实第三方接口可达。
+浏览器测试需要已安装的 Playwright 与 Chromium；支持通过 `CHROMIUM_PATH` 指定浏览器，不自动下载依赖。首页测试使用合成数据验证首屏 IP、摘要与地理及网络资料、纯净度等待、失败及数据可用性状态、查询与复制操作、连接探测不自动运行、地图按需加载、评分详情及 393px / 390px 手机首屏布局。独立连接模块另用合成响应验证观测与判定逻辑；测试夹具不保证真实第三方接口可达。
 
 ## 数据来源与许可
 
 本项目代码采用 MIT 许可。数据不随代码分发，由服务端从各来源下载，使用时请遵守原始许可：
 
-- GeoLite2、IPinfo Lite（经 Merged-IP 合并）：CC BY-SA 4.0。DB-IP Lite：CC BY 4.0。页面通过“数据说明”入口提供来源与许可信息。
+- GeoLite2、IPinfo Lite（经 Merged-IP 合并）：CC BY-SA 4.0。DB-IP Lite：CC BY 4.0。来源与许可在本说明文档提供。
 - ip2region：Apache-2.0。lord-alfred/ipranges：CC0。axpwx/IP-Data、monosans/proxy-list：MIT。stamparm/ipsum：Unlicense。proxifly/free-proxy-list：GPL-3.0。
 - X4BNet/lists_vpn、FireHOL、bgp.tools、Spamhaus DROP、各云厂商网段：按各自网站的使用条款。
 - 地图：Leaflet 1.9.4（BSD-2-Clause，随代码放在 `web/static/vendor/leaflet/`），底图来自 OpenStreetMap（ODbL）。地图控件保留 OpenStreetMap 贡献者署名；页面底部不重复展示大段来源说明。

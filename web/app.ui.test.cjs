@@ -101,7 +101,7 @@ function locatedReport(ip, value) {
 }
 
 async function fixture({width = 1440, height = width === 393 ? 852 : 900, colorScheme = 'light', javascriptEnabled = true,
-  lookup = ip => ({json: report(ip)}), clipboardOK = true} = {}) {
+  siteOrigin = origin, lookup = ip => ({json: report(ip)}), clipboardOK = true} = {}) {
   const context = await browser.newContext({viewport: {width, height},
     colorScheme, javaScriptEnabled: javascriptEnabled, timezoneId: 'Asia/Shanghai'});
   const page = await context.newPage();
@@ -138,7 +138,7 @@ async function fixture({width = 1440, height = width === 393 ? 852 : 900, colorS
     const done = deferred(), request = {url, method: route.request().method(), done: done.promise};
     requests.push(request);
     try {
-      if (url.origin !== origin) {
+      if (url.origin !== siteOrigin) {
         external.push(url.origin + url.pathname);
         if (url.protocol === 'https:' && url.hostname === 'tile.openstreetmap.org' && /^\/\d+\/\d+\/\d+\.png$/.test(url.pathname)) {
           return await route.fulfill({contentType: 'image/png', body: Buffer.from(
@@ -153,6 +153,14 @@ async function fixture({width = 1440, height = width === 393 ? 852 : 900, colorS
           response = {...response, json: {...response.json, mode: url.searchParams.get('mode') || 'full'}};
         }
         return await route.fulfill(response);
+      }
+      if (siteOrigin !== origin) {
+        const upstream = await fetch(origin + url.pathname + url.search);
+        return await route.fulfill({
+          status: upstream.status,
+          headers: Object.fromEntries(upstream.headers.entries()),
+          body: Buffer.from(await upstream.arrayBuffer()),
+        });
       }
       await route.continue();
     } catch (error) {
@@ -290,6 +298,9 @@ test('the upper report shows IP type, geography and network while the removed lo
     assert.equal(await f.page.locator('#attribution').count(), 0);
     assert.equal(await f.page.getByText('数据说明', {exact: true}).count(), 0,
       'the data attribution entry has been removed from the page');
+    const riskTab = f.page.locator('#riskTab');
+    assert.equal(await riskTab.isVisible(), true);
+    await textIs(f.page, '#riskTab', 'IP风控值检测');
     const gh = f.page.locator('footer a.gh-link');
     assert.equal(await gh.isVisible(), true);
     assert.equal(await gh.getAttribute('href'), 'https://github.com/zzusec/ip-lookup');
@@ -301,6 +312,23 @@ test('the upper report shows IP type, geography and network while the removed lo
     assert.equal(f.lookups().length, 2);
     await onlyExpectedTraffic(f);
   } finally { await f.close(); }
+});
+
+test('the IP风控值检测 tab points to the matching who.<domain> sibling for whichever ip.<domain> opened the page', async () => {
+  for (const [siteOrigin, wantHref] of [
+    ['https://ip.primary.example.com', 'https://who.primary.example.com/'],
+    ['https://ip.backup.example.org', 'https://who.backup.example.org/'],
+  ]) {
+    const f = await fixture({siteOrigin});
+    try {
+      await f.page.goto(siteOrigin + '/');
+      await settled(f.page, SELF, 85);
+      const riskTab = f.page.locator('#riskTab');
+      assert.equal(await riskTab.isVisible(), true);
+      assert.equal(await riskTab.getAttribute('href'), wantHref);
+      await onlyExpectedTraffic(f);
+    } finally { await f.close(); }
+  }
 });
 
 test('score details explain deductions, normalised risks, DNSBL results and source status in a dismissible dialog', async () => {

@@ -13,7 +13,13 @@
 <body>
 <header class="top">
   <div class="wrap top-in">
-    <a class="brand" href="/" data-nav><img src="/static/favicon.svg" alt="" width="24" height="24">IP 类型查询</a>
+    <nav class="top-nav" aria-label="功能导航">
+      <a class="brand" href="/" data-nav aria-label="IP 类型查询"><img src="/static/favicon.svg" alt="" width="24" height="24"></a>
+      <div class="top-tabs">
+        <a class="top-tab active" href="/" data-nav aria-current="page">IP 类型查询</a>
+        <a id="riskTab" class="top-tab" href="https://github.com/zzusec/whoprobe" target="_blank" rel="noopener noreferrer">IP风控值检测</a>
+      </div>
+    </nav>
     <form id="q" class="search" autocomplete="off" novalidate>
       <label for="qi" class="vh">IP 地址</label>
       <input id="qi" type="text" spellcheck="false" autocapitalize="off" maxlength="64" placeholder="输入 IPv4 或 IPv6 地址">

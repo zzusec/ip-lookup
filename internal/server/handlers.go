@@ -2,13 +2,55 @@ package server
 
 import (
 	"bytes"
+	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/zzusec/ip-lookup/internal/model"
 )
+
+const defaultRiskTabHref = "https://github.com/zzusec/whoprobe"
+
+func isSafeDomain(h string) bool {
+	if len(h) == 0 || len(h) > 253 || strings.HasPrefix(h, ".") || strings.HasSuffix(h, ".") || strings.Contains(h, "..") {
+		return false
+	}
+	hasDot := false
+	for i := 0; i < len(h); i++ {
+		c := h[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-':
+		case c == '.':
+			hasDot = true
+		default:
+			return false
+		}
+	}
+	return hasDot
+}
+
+func (s *Server) riskTabHref(host string) string {
+	h := strings.TrimSpace(host)
+	if hostOnly, _, err := net.SplitHostPort(h); err == nil {
+		h = hostOnly
+	}
+	h = strings.ToLower(strings.TrimSuffix(h, "."))
+	if strings.HasPrefix(h, "ip.") {
+		rest := h[3:]
+		if isSafeDomain(rest) && net.ParseIP(rest) == nil {
+			return "https://who." + rest + "/"
+		}
+	}
+	if fb := strings.TrimSpace(s.RiskCheckURL); fb != "" {
+		if u, err := url.Parse(fb); err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != "" {
+			return u.String()
+		}
+	}
+	return defaultRiskTabHref
+}
 
 // target resolves the address a request asks about: the explicit one in the
 // path or ?ip=, else the visitor. self reports whether it is the visitor.
@@ -100,7 +142,11 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "private, no-store")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; connect-src *; img-src 'self' data: https:; "+
 			"style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'")
-		w.Write(bytes.ReplaceAll(s.index, []byte("__IP_ADDRESS__"), []byte(address)))
+		body := bytes.ReplaceAll(s.index, []byte("__IP_ADDRESS__"), []byte(address))
+		if href := s.riskTabHref(r.Host); href != defaultRiskTabHref {
+			body = bytes.Replace(body, []byte(`href="`+defaultRiskTabHref+`"`), []byte(`href="`+href+`"`), 1)
+		}
+		w.Write(body)
 		return
 	}
 	full := r.URL.Query().Get("mode") != "fast"

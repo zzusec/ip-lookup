@@ -24,8 +24,13 @@ h3{font-size:13px;margin:14px 0 6px;color:var(--mut);font-weight:600}
 .mut{color:var(--mut)}
 .top{background:var(--card);border-bottom:1px solid var(--line)}
 .top-in{display:flex;align-items:center;gap:16px;padding-top:12px;padding-bottom:12px;flex-wrap:wrap}
-.brand{display:flex;align-items:center;gap:8px;font-size:17px;font-weight:700;color:var(--ink);margin-right:auto}
+.top-nav{display:flex;align-items:center;gap:10px;margin-right:auto;min-width:0}
+.brand{display:inline-flex;align-items:center;flex:none;color:var(--ink)}
 .brand:hover{text-decoration:none}
+.top-tabs{display:inline-flex;align-items:center;gap:2px;padding:3px;border-radius:8px;background:var(--soft);border:1px solid var(--line)}
+.top-tab{display:inline-flex;align-items:center;height:28px;padding:0 10px;border-radius:6px;font-size:13px;font-weight:600;color:var(--mut);white-space:nowrap}
+.top-tab:hover{color:var(--ink);text-decoration:none}
+.top-tab.active{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgb(0 0 0 / .06)}
 .search{display:flex;gap:8px;flex:1 1 420px;max-width:560px}
 .search input{flex:1;min-width:0;height:36px;padding:0 12px;border:1px solid var(--line);border-radius:7px;background:var(--soft);color:var(--ink);font:14px var(--mono)}
 .search input:focus{border-color:var(--acc);outline:none;background:var(--card)}

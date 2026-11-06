@@ -66,7 +66,13 @@ func run(log *slog.Logger) error {
 		DNS:     dnsq.New(strings.Split(env("DNS_SERVERS", "1.1.1.1:53,8.8.8.8:53"), ",")),
 		Timeout: 9 * time.Second,
 	}
-	srv := &server.Server{Lookup: svc, Web: web.FS, TrustProxy: env("TRUST_PROXY", "1") == "1", Log: log}
+	srv := &server.Server{
+		Lookup:       svc,
+		Web:          web.FS,
+		TrustProxy:   env("TRUST_PROXY", "1") == "1",
+		RiskCheckURL: env("RISK_CHECK_URL", ""),
+		Log:          log,
+	}
 	h, err := srv.Handler()
 	if err != nil {
 		return err

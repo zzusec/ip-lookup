@@ -23,12 +23,13 @@ import (
 
 // Server routes requests to the lookup service.
 type Server struct {
-	Lookup     *lookup.Service
-	Web        fs.FS // contains index.html and static/
-	TrustProxy bool  // read X-Real-IP / X-Forwarded-* from loopback peers
-	Log        *slog.Logger
-	limit      *rateLimiter
-	index      []byte
+	Lookup       *lookup.Service
+	Web          fs.FS  // contains index.html and static/
+	TrustProxy   bool   // read X-Real-IP / X-Forwarded-* from loopback peers
+	RiskCheckURL string // optional fallback URL for the sibling risk-check tab
+	Log          *slog.Logger
+	limit        *rateLimiter
+	index        []byte
 }
 
 func (s *Server) Handler() (http.Handler, error) {

@@ -3,7 +3,15 @@ const $ = s => document.querySelector(s);
 const bootIP = $('#ipAddress')?.textContent || '';
 const out = $('#out'), statusEl = $('#status'), form = $('#q'), input = $('#qi'), qerr = $('#qerr');
 const scoreDialog = $('#scoreDetails'), scoreDetailsBody = $('#scoreDetailsBody');
+const riskTab = $('#riskTab');
 let scoreDetailsOpener = null;
+
+function siblingWhoHref(host) {
+  host = String(host || '').trim().toLowerCase().replace(/:\d+$/, '').replace(/\.$/, '');
+  return /^ip\.[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host) && !/^ip\.(\d+\.){3}\d+$/.test(host) ? `https://who.${host.slice(3)}/` : '';
+}
+const derivedWhoHref = siblingWhoHref(location.hostname);
+if (riskTab && derivedWhoHref) riskTab.href = derivedWhoHref;
 
 const HUE = {residential: 150, mobile: 195, hosting: 28, cdn: 265, business: 215, education: 175, government: 330,
   tor: 4, vpn: 4, proxy: 4, abuser: 4, abuse: 4, crawler: 45, icloud_relay: 210, public_service: 190, anycast: 240, satellite: 280, org: 215};

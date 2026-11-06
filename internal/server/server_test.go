@@ -132,3 +132,30 @@ func TestRateLimiter(t *testing.T) {
 		t.Fatal("other /64 refused")
 	}
 }
+
+func TestPageRiskTabMatchesRequestHost(t *testing.T) {
+	s := &Server{Web: web.FS, TrustProxy: true, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	h, err := s.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ host, want string }{
+		{"ip.example.com", "https://who.example.com/"},
+		{"ip.backup.example.org:443", "https://who.backup.example.org/"},
+		{"IP.MixedCase.Example.NET", "https://who.mixedcase.example.net/"},
+		{"localhost:8990", "https://github.com/zzusec/whoprobe"},
+		{`ip.bad"><script>alert(1)</script>.com`, "https://github.com/zzusec/whoprobe"},
+		{"ip.192.0.2.1", "https://github.com/zzusec/whoprobe"},
+	} {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Host = c.host
+		r.Header.Set("Accept", "text/html")
+		r.Header.Set("X-Forwarded-Proto", "https")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		wantAttr := `id="riskTab" class="top-tab" href="` + c.want + `"`
+		if w.Code != 200 || !strings.Contains(w.Body.String(), wantAttr) {
+			t.Errorf("host %q: expected %s in HTML (status %d)", c.host, wantAttr, w.Code)
+		}
+	}
+}

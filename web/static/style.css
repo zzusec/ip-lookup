@@ -119,8 +119,10 @@ tr.hl td{background:var(--hl)}
 .hints:empty{display:none}
 .hints li{padding:8px 12px;border-radius:7px;background:var(--hint);color:var(--hint-ink);font-size:13px}
 .stale{opacity:.45;transition:opacity .2s}
-.foot{padding-top:4px;padding-bottom:32px;font-size:12px;color:var(--mut);overflow-wrap:anywhere}
+.foot{padding-top:6px;padding-bottom:28px;font-size:12px;color:var(--mut);text-align:center;overflow-wrap:anywhere}
 .foot p{margin:4px 0}
+.gh-link{display:inline-flex;align-items:center;gap:5px;color:var(--mut)}
+.gh-link:hover{color:var(--acc)}
 .score-details-toggle{height:34px;padding:0 12px;font-size:13px;color:var(--acc)}
 .score-details-toggle:disabled{opacity:.55;cursor:default}
 #scoreDetails{width:min(760px,calc(100% - 28px));max-height:calc(100dvh - 32px);padding:0;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink)}

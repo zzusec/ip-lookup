@@ -287,9 +287,14 @@ test('the upper report shows IP type, geography and network while the removed lo
     assert.equal(await f.page.locator('#out table, #connection, #out .map, #out .mapcard, #out .factors, #evidenceCard').count(), 0);
     assert.doesNotMatch(visibleText, /判定依据|多源地理|我的连接|连接明细|扣分|CC BY/);
     assert.equal(await f.page.locator('details').count(), 0, 'removed content must not be kept in collapsed panels');
-    assert.equal(await f.page.locator('footer, #attribution').count(), 0);
+    assert.equal(await f.page.locator('#attribution').count(), 0);
     assert.equal(await f.page.getByText('数据说明', {exact: true}).count(), 0,
       'the data attribution entry has been removed from the page');
+    const gh = f.page.locator('footer a.gh-link');
+    assert.equal(await gh.isVisible(), true);
+    assert.equal(await gh.getAttribute('href'), 'https://github.com/zzusec/ip-lookup');
+    assert.equal(await gh.getAttribute('target'), '_blank');
+    assert.equal(await gh.getAttribute('rel'), 'noopener noreferrer');
     assert.equal(await f.page.locator('#scoreDetails').isVisible(), false);
     assert.equal(await f.page.locator('#scoreDetails').evaluate(dialog => dialog.closest('#out')), null,
       'the native dialog must survive result replacement outside #out');

@@ -140,6 +140,7 @@ func (s *Service) finish(o *sources.Out) {
 		o.Signal("leased", "地址租赁审计", lease.Broker, 70)
 	}
 	fillCountries(r)
+	fillConsensusGeo(r)
 	sig := append([]model.Signal{}, o.Sig...)
 	sig = append(sig, classify.OrgText(names)...)
 	sig = append(sig, classify.RDNS(n.RDNS)...)
@@ -206,5 +207,126 @@ func fillCountries(r *model.Result) {
 	}
 	if r.Geo.Country == "" && r.Geo.CountryCode != "" {
 		r.Geo.Country = name[strings.ToUpper(r.Geo.CountryCode)]
+	}
+}
+
+var trustedGeoWeight = map[string]int{
+	"ip2region":        6,
+	"Merged-IP":        5,
+	"ip-api.com":       4,
+	"ipwho.is":         3,
+	"DB-IP City Lite":  3,
+	"ipinfo.io":        3,
+	"IP2Location.io":   3,
+	"ipdata.co":        2,
+	"ip.sb":            2,
+	"ipapi.is":         2,
+}
+
+func hasCJK(s string) bool {
+	for _, r := range s {
+		if r >= 0x4E00 && r <= 0x9FFF {
+			return true
+		}
+	}
+	return false
+}
+
+func normPlaceKey(s string) string {
+	s = strings.TrimSpace(s)
+	if idx := strings.Index(s, "("); idx > 0 {
+		s = strings.TrimSpace(s[:idx])
+	}
+	if idx := strings.Index(s, "（"); idx > 0 {
+		s = strings.TrimSpace(s[:idx])
+	}
+	return strings.ToLower(s)
+}
+
+// fillConsensusGeo backfills missing Region / City on r.Geo by majority vote
+// across trusted geolocation sources when Merged-IP only knows the country.
+func fillConsensusGeo(r *model.Result) {
+	if r == nil || (r.Geo.City != "" && r.Geo.Region != "") {
+		return
+	}
+	cc := strings.ToUpper(strings.TrimSpace(r.Geo.CountryCode))
+	type cand struct {
+		region string
+		city   string
+		weight int
+		cjk    bool
+	}
+	clusters := map[string][]cand{}
+	votes := map[string]int{}
+	for _, gs := range r.GeoSources {
+		w := trustedGeoWeight[gs.Source]
+		if w == 0 {
+			continue
+		}
+		if gs.Source == "ip2region" && cc != "CN" {
+			continue
+		}
+		if cc != "" && gs.CountryCode != "" && !strings.EqualFold(gs.CountryCode, cc) {
+			continue
+		}
+		reg, city := strings.TrimSpace(gs.Region), strings.TrimSpace(gs.City)
+		if reg == "" && city == "" {
+			continue
+		}
+		key := normPlaceKey(city)
+		if key == "" {
+			key = "reg:" + normPlaceKey(reg)
+		}
+		votes[key]++
+		clusters[key] = append(clusters[key], cand{
+			region: reg,
+			city:   city,
+			weight: w,
+			cjk:    hasCJK(reg) || hasCJK(city),
+		})
+	}
+	bestKey := ""
+	bestVotes, bestScore := 0, -1
+	for k, list := range clusters {
+		v := votes[k]
+		topScore := 0
+		for _, c := range list {
+			sc := c.weight
+			if c.cjk {
+				sc += 4
+			}
+			if c.region != "" && c.city != "" {
+				sc += 2
+			}
+			if sc > topScore {
+				topScore = sc
+			}
+		}
+		if v > bestVotes || (v == bestVotes && topScore > bestScore) {
+			bestKey, bestVotes, bestScore = k, v, topScore
+		}
+	}
+	if bestKey == "" {
+		return
+	}
+	var win cand
+	winScore := -1
+	for _, c := range clusters[bestKey] {
+		sc := c.weight
+		if c.cjk {
+			sc += 4
+		}
+		if c.region != "" && c.city != "" {
+			sc += 2
+		}
+		if sc > winScore {
+			win, winScore = c, sc
+		}
+	}
+	if r.Geo.Region == "" && win.region != "" {
+		r.Geo.Region = win.region
+	}
+	if r.Geo.City == "" && win.city != "" {
+		r.Geo.City = win.city
 	}
 }

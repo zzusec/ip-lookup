@@ -26,3 +26,20 @@ func TestFinishSkipsChineseNotes(t *testing.T) {
 		t.Errorf("name keyword signals = %v, want [%s]", got, want)
 	}
 }
+
+func TestFillConsensusGeo(t *testing.T) {
+	r := &model.Result{
+		Geo: model.Geo{Country: "泰国", CountryCode: "TH"},
+		GeoSources: []model.GeoSource{
+			{Source: "Merged-IP", Country: "泰国", CountryCode: "TH"},
+			{Source: "DB-IP City Lite", Country: "泰国", CountryCode: "TH", Region: "Uttaradit", City: "Tron"},
+			{Source: "IP2Location.io", Country: "泰国", CountryCode: "TH", Region: "Phetchabun", City: "Si Thep"},
+			{Source: "ipinfo.io", Country: "泰国", CountryCode: "TH", Region: "Chiang Mai", City: "Wiang Haeng"},
+			{Source: "ip-api.com", Country: "泰国", CountryCode: "TH", Region: "程逸府", City: "Tron"},
+		},
+	}
+	fillConsensusGeo(r)
+	if r.Geo.Region != "程逸府" || r.Geo.City != "Tron" {
+		t.Fatalf("got region=%q city=%q, want 程逸府 / Tron", r.Geo.Region, r.Geo.City)
+	}
+}

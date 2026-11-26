@@ -186,10 +186,136 @@ const ipHead = r => h('div', {class: 'v-ip'},
   h('button', {id: 'copy', type: 'button', class: 'btn sm', disabled: !normIP(r.ip), 'aria-label': '复制 IP 地址', onclick: e => copy(r.ip, e.currentTarget)}, '复制'),
   r.version ? tag('IPv' + r.version) : null);
 
+// Pick ONE best-matching location via multi-source consensus + localized CJK preference
+const PLACE_WEIGHT = new Map([
+  ['ip2region', 6], ['Merged-IP', 5], ['ip-api.com', 4],
+  ['ipwho.is', 3], ['DB-IP City Lite', 3], ['ipinfo.io', 3], ['IP2Location.io', 3],
+]);
+const hasCJK = s => /[\u4e00-\u9fff]/.test(String(s || ''));
+const normCityKey = s => String(s || '').trim().replace(/\s*[（(].*?[)）]\s*$/g, '').trim().toLowerCase();
+
+function bestPlace(r) {
+  const g = r.geo || {}, list = r.geo_sources || [];
+  const cc = (g.country_code || '').toUpperCase();
+  const cands = [];
+  if (has([g.country, g.country_code, g.region, g.city])) {
+    cands.push({
+      country_code: g.country_code,
+      country: g.country || g.country_en,
+      region: g.region || g.region_en || '',
+      city: g.city || g.city_en || '',
+      weight: 5,
+    });
+  }
+  for (const s of list) {
+    const w = PLACE_WEIGHT.get(s.source);
+    if (!w || (s.source === 'ip2region' && cc !== 'CN')) continue;
+    if (cc && s.country_code && s.country_code.toUpperCase() !== cc) continue;
+    if (!has([s.country, s.country_code])) continue;
+    cands.push({
+      country_code: s.country_code || cc,
+      country: s.country || '',
+      region: s.region || '',
+      city: s.city || '',
+      weight: w,
+    });
+  }
+  if (!cands.length) return null;
+
+  // Group candidates with city/region by normalized city (or region) so majority-agreed locations win
+  const clusters = new Map();
+  for (const c of cands) {
+    const key = normCityKey(c.city) || (c.region ? 'reg:' + normCityKey(c.region) : '');
+    if (!key) continue;
+    if (!clusters.has(key)) clusters.set(key, []);
+    clusters.get(key).push(c);
+  }
+
+  let chosen = cands[0];
+  if (clusters.size > 0) {
+    const scoreCand = c => c.weight + (hasCJK(c.region) || hasCJK(c.city) ? 4 : 0) + (c.region && c.city ? 2 : 0);
+    let bestKey = '', bestVotes = -1, bestTop = -1;
+    for (const [k, arr] of clusters) {
+      const top = Math.max(...arr.map(scoreCand));
+      if (arr.length > bestVotes || (arr.length === bestVotes && top > bestTop)) {
+        bestKey = k; bestVotes = arr.length; bestTop = top;
+      }
+    }
+    const winners = clusters.get(bestKey) || [];
+    winners.sort((a, b) => scoreCand(b) - scoreCand(a));
+    if (winners[0]) chosen = winners[0];
+  }
+
+  const cleanCity = String(chosen.city || '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+  const cleanReg = String(chosen.region || '').trim();
+  const parts = [countryOf(chosen), cleanReg, cleanCity && cleanCity !== cleanReg ? cleanCity : ''].filter(has);
+  return parts.length ? h('span', {class: 'best-loc'}, parts.join(', ')) : null;
+}
+
+function resolveTrafficModel(r, pending) {
+  const tr = r.traffic || {};
+  if (tr.mode === 'radar' || tr.mode === 'estimated') return tr;
+  if (pending || r.bogon || r.mode !== 'full' || r.score?.data_status === 'unavailable') return null;
+  const v = r.verdict || {}, f = r.flags || {};
+  const baseBot = {residential: 8, mobile: 6, education: 15, government: 14, business: 18, cdn: 46, hosting: 66}[v.type] ?? 22;
+  const extra = (f.is_crawler ? 40 : 0) + (f.is_tor ? 24 : f.is_proxy || f.is_vpn ? 16 : 0) + (f.is_abuser ? 18 : 0);
+  const botPct = Math.min(96, Math.max(4, baseBot + extra));
+  const humanPct = 100 - botPct;
+  const tier = trafficTier(humanPct);
+  return {
+    mode: 'baseline',
+    source: '网络类型基线推算',
+    human_pct: humanPct,
+    bot_pct: botPct,
+    level: tier.level,
+    tone: tier.tone,
+    bot_signals: tr.bot_signals || [],
+    request_probe: tr.request_probe || null,
+  };
+}
+
+function verdictTrafficBox(r, state) {
+  if (state === 'bogon') return null;
+  const waiting = state === 'pending';
+  const tm = resolveTrafficModel(r, waiting || state === 'error');
+  if (!tm) {
+    return h('div', {id: 'verdictTraffic', class: 'verdict-traffic'},
+      h('div', {class: 'vt-head'},
+        h('span', {class: 'vt-title'}, '人机流量'),
+        h('span', {class: 'vt-src'}, waiting ? '评估中…' : '数据不足')),
+      empty(waiting ? '正在计算自治系统人机流量分布…' : (r.traffic?.note || '暂无法估算人机比例')));
+  }
+  const hp = clamp(tm.human_pct), bp = clamp(tm.bot_pct);
+  const tier = trafficTier(hp, tm.tone, tm.level);
+  const srcText = tm.mode === 'radar'
+    ? `Cloudflare Radar · ${tm.window || '7d'}`
+    : (tm.source || '多源行为与网段特征推算');
+  const hasDev = typeof tm.desktop_pct === 'number' && typeof tm.mobile_pct === 'number';
+  return h('div', {id: 'verdictTraffic', class: 'verdict-traffic'},
+    h('div', {class: 'vt-head'},
+      h('span', {class: 'vt-title'}, '人机流量', pill(tier.level, tier.tone)),
+      h('span', {class: 'vt-src'}, srcText)),
+    h('div', {class: 'hb-bar', role: 'img', 'aria-label': `人类 ${fmtPct(hp)}，机器 ${fmtPct(bp)}`},
+      hp > 0 ? h('span', {class: 'seg-h', style: {width: hp + '%'}}) : null,
+      bp > 0 ? h('span', {class: 'seg-b', style: {width: bp + '%'}}) : null),
+    h('div', {class: 'vt-foot mono'},
+      h('span', {class: 'h-txt'}, '人类 ' + fmtPct(hp)),
+      h('span', {class: 'b-txt'}, '机器 ' + fmtPct(bp))),
+    hasDev ? [
+      h('div', {class: 'hb-bar dev', role: 'img', 'aria-label': `桌面端 ${fmtPct(tm.desktop_pct)}，移动端 ${fmtPct(tm.mobile_pct)}`},
+        h('span', {class: 'seg-h', style: {width: clamp(tm.desktop_pct) + '%'}}),
+        h('span', {class: 'seg-b', style: {width: clamp(tm.mobile_pct) + '%'}})),
+      h('div', {class: 'vt-dev-row mono'},
+        h('span', null, '桌面端 ' + fmtPct(tm.desktop_pct)),
+        h('span', null, '移动端 ' + fmtPct(tm.mobile_pct))),
+    ] : null);
+}
+
 // Band 1: Top Summary Dossier (#result)
 function verdictCard(r, pending, failed = false) {
   const v = r.verdict || {}, conf = CONF[v.confidence], borderColor = VERDICT_BORDER_VAR[v.type], n = r.network || {};
   const typeTone = TYPE_TONE[v.type] || 'neutral';
+  const state = r.bogon ? 'bogon' : failed ? 'error' : pending ? 'pending' : '';
   const identity = h('div', {class: 'summary-identity'}, ipHead(r),
     h('p', {class: 'v-label'}, r.bogon ? '私网或保留地址' : v.label || v.type_label || (pending && !failed ? '识别中…' : '未知')),
     r.bogon ? h('p', null, r.bogon) : null);
@@ -198,7 +324,7 @@ function verdictCard(r, pending, failed = false) {
       ['ASN', n.asn && [ext('https://bgp.tools/as/' + n.asn, 'AS' + n.asn), n.as_name ? ' – ' + n.as_name : '']],
       ['AS 域名', n.as_domain],
       ['IP 范围', mono(n.net_range || n.bgp_prefix || n.prefix)],
-      ['位置', places(r)],
+      ['位置', bestPlace(r)],
       ['IP 来源', nativeLine(r.native || {})],
       ['IP 属性', h('div', {class: 'tags'},
         v.type_label ? pill(v.type_label, typeTone) : null,
@@ -211,16 +337,7 @@ function verdictCard(r, pending, failed = false) {
       r.elapsed_ms != null ? h('span', null, `耗时 ${r.elapsed_ms} ms`) : null));
   return h('section', {id: 'result', 'aria-busy': String(Boolean(pending && !failed && !r.bogon)),
     class: borderColor ? 'card verdict hue' : 'card verdict', style: borderColor ? {'--verdict-c': borderColor} : null},
-    identity, scoreBox(r, r.bogon ? 'bogon' : failed ? 'error' : pending ? 'pending' : ''), body);
-}
-
-const PLACE_SRC = ['Merged-IP', 'ip2region', 'DB-IP City Lite', 'IP2Location.io', 'ipinfo.io', 'ip-api.com'];
-function places(r) {
-  const list = r.geo_sources || [], cn = (r.geo?.country_code || '').toUpperCase() === 'CN';
-  const rows = PLACE_SRC.filter(n => cn || n !== 'ip2region').map(n => list.find(s => s.source === n))
-    .filter(s => s && has([s.country, s.country_code]));
-  return rows.length ? h('div', {class: 'locs'}, rows.map(s => h('div', null, h('span', {class: 'mut'}, s.source),
-    h('span', null, [countryOf(s), s.region, s.city !== s.region && s.city].filter(has).join(', '))))) : null;
+    identity, scoreBox(r, state), verdictTrafficBox(r, state), body);
 }
 
 function scoreBox(r, state) {
@@ -241,10 +358,11 @@ function scoreBox(r, state) {
       style: {'--v': v}, role: 'img',
       'aria-label': unknown ? level : `纯净度 ${v} 分，${level}`},
       h('b', {id: 'scoreValue'}, unknown ? '—' : String(v)), h('span', {id: 'scoreLevel'}, level)),
-    h('span', {class: 'mut'}, '纯净度 ', h('span', {id: 'scoreTotal', hidden: state === 'bogon'}, '/100')),
-    !state && quality ? h('span', {class: 'score-data mut', title: '只统计实际返回安全字段或风险读数的信誉源；数据返回不代表安全保证。'}, quality + coverageText) : null,
-    h('button', {id: 'scoreDetailsToggle', type: 'button', class: 'btn score-details-toggle', disabled: state === 'pending' || !r.mode,
-      'aria-haspopup': 'dialog', 'aria-controls': 'scoreDetails', onclick: e => showScoreDetails(r, e.currentTarget)}, '评分详情'));
+    h('div', {class: 'score-meta'},
+      h('span', {class: 'mut'}, '纯净度 ', h('span', {id: 'scoreTotal', hidden: state === 'bogon'}, '/100')),
+      !state && quality ? h('span', {class: 'score-data', title: '只统计实际返回安全字段或风险读数的信誉源；数据返回不代表安全保证。'}, quality + coverageText) : null,
+      h('button', {id: 'scoreDetailsToggle', type: 'button', class: 'btn score-details-toggle', disabled: state === 'pending' || !r.mode,
+        'aria-haspopup': 'dialog', 'aria-controls': 'scoreDetails', onclick: e => showScoreDetails(r, e.currentTarget)}, '评分详情')));
 }
 
 function nativeLine(n) {
@@ -261,30 +379,7 @@ function nativeLine(n) {
     n.status === 'unknown' && n.detail ? h('span', {class: 'mut'}, n.detail) : null);
 }
 
-// Band 2: Left (Human-vs-Bot Traffic Profile) + Right (4-Scenario Suitability Cards)
-function resolveTrafficModel(r, pending) {
-  const tr = r.traffic || {};
-  if (tr.mode === 'radar' || tr.mode === 'estimated') return tr;
-  if (pending || r.bogon || r.mode !== 'full' || r.score?.data_status === 'unavailable') return null;
-  const v = r.verdict || {}, f = r.flags || {};
-  const baseBot = {residential: 8, mobile: 6, education: 15, government: 14, business: 18, cdn: 46, hosting: 66}[v.type] ?? 22;
-  const extra = (f.is_crawler ? 40 : 0) + (f.is_tor ? 24 : f.is_proxy || f.is_vpn ? 16 : 0) + (f.is_abuser ? 18 : 0);
-  const botPct = Math.min(96, Math.max(4, baseBot + extra));
-  const humanPct = 100 - botPct;
-  const tier = trafficTier(humanPct);
-  return {
-    mode: 'baseline',
-    source: '网络类型基线推算',
-    human_pct: humanPct,
-    bot_pct: botPct,
-    level: tier.level,
-    tone: tier.tone,
-    note: '基于自治系统用途属性与公开风险特征生成的基线分布参考',
-    bot_signals: tr.bot_signals || [],
-    request_probe: tr.request_probe || null,
-  };
-}
-
+// Band 2: Left (4-Scenario Suitability Cards) + Right (Risk Matrix & Cross-Audit Notes)
 function buildFallbackScenarios(r) {
   if (Array.isArray(r.audit?.scenarios) && r.audit.scenarios.length) return r.audit.scenarios;
   if (r.mode !== 'full' || r.score?.data_status === 'unavailable' || r.bogon) return [];
@@ -305,70 +400,7 @@ function buildFallbackScenarios(r) {
   ];
 }
 
-function trafficAndScenarioRow(r, pending) {
-  const tm = resolveTrafficModel(r, pending);
-  const reqProbe = r.traffic?.request_probe || tm?.request_probe;
-  const flow = r.audit?.flow;
-
-  let trafficBody;
-  if (tm) {
-    const hp = clamp(tm.human_pct), bp = clamp(tm.bot_pct);
-    const tier = trafficTier(hp, tm.tone, tm.level);
-    const srcLabel = tm.mode === 'radar'
-      ? `Cloudflare Radar · 近 ${tm.window || '7d'} 自治系统实测`
-      : (tm.source || '多源行为与网络特征推算');
-    const hasDev = typeof tm.desktop_pct === 'number' && typeof tm.mobile_pct === 'number';
-    const sigs = Array.isArray(tm.bot_signals) ? tm.bot_signals : [];
-
-    let visitorRow = null;
-    if (reqProbe) {
-      const env = inspectBrowserClient();
-      const autoPct = clamp(Math.round(reqProbe.automation_share * 0.65 + env.autoPts * 0.35));
-      const humanShare = 100 - autoPct;
-      visitorRow = autoPct >= 45
-        ? pill(`脚本/自动化倾向 ${autoPct}% · ${reqProbe.client_family || '客户端'}`, 'warn')
-        : dot(`真人交互特征 ${humanShare}% · ${reqProbe.client_family || '标准浏览器'}${reqProbe.proto ? ' (' + reqProbe.proto + ')' : ''}`, 'ok');
-    }
-
-    trafficBody = [
-      h('div', {class: 'stat-strip two'},
-        statTile('人类自然流量', '人类 ' + fmtPct(hp), '真人终端交互请求占比', 'human mono'),
-        statTile('机器与自动化流量', '机器 ' + fmtPct(bp), '爬虫、扫描与脚本请求占比', 'bot mono')),
-      h('div', {class: 'hb-panel'},
-        h('div', {class: 'hb-bar-head'}, h('span', null, '流量构成分布'), h('span', null, srcLabel)),
-        h('div', {class: 'hb-bar', role: 'img', 'aria-label': `人类 ${fmtPct(hp)}，机器 ${fmtPct(bp)}`},
-          hp > 0 ? h('span', {class: 'seg-h', style: {width: hp + '%'}}) : null,
-          bp > 0 ? h('span', {class: 'seg-b', style: {width: bp + '%'}}) : null),
-        hasDev ? h('div', {class: 'hb-dev'},
-          h('div', {class: 'hb-bar dev', role: 'img', 'aria-label': `桌面端 ${fmtPct(tm.desktop_pct)}，移动端 ${fmtPct(tm.mobile_pct)}`},
-            h('span', {class: 'seg-h', style: {width: clamp(tm.desktop_pct) + '%'}}),
-            h('span', {class: 'seg-b', style: {width: clamp(tm.mobile_pct) + '%'}})),
-          h('div', {class: 'hb-dev-row mono'},
-            h('span', null, '桌面端 ' + fmtPct(tm.desktop_pct)),
-            h('span', null, '移动端 ' + fmtPct(tm.mobile_pct)))) : null,
-        sigs.length ? h('ul', {class: 'hb-signals'}, sigs.map(s => h('li', null, s))) : null,
-        tm.note ? h('p', {class: 'hb-note'}, tm.note) : null),
-      kv([
-        ['流量方向', flow?.ratio_label || flow?.traffic_ratio],
-        ['当前访客握手', visitorRow],
-      ]),
-    ];
-  } else {
-    trafficBody = [
-      h('div', {class: 'hb-panel'},
-        empty(pending ? '正在结合自治系统与在线信誉源计算人机流量比例…' : (r.traffic?.note || '当前缺少足够的在线信誉数据，暂不估算人机流量比例'))),
-    ];
-  }
-
-  const tierBadge = tm ? pill(trafficTier(tm.human_pct, tm.tone, tm.level).level, trafficTier(tm.human_pct, tm.tone, tm.level).tone) : null;
-  const leftCard = richCard(
-    'trafficCard',
-    '人机流量与终端分布',
-    '评估自治系统真人浏览与自动化脚本/爬虫流量占比',
-    tierBadge,
-    trafficBody
-  );
-
+function scenarioAndRiskRow(r, pending) {
   const scenarios = buildFallbackScenarios(r);
   const scenarioNames = {
     tiktok: 'TikTok · 短视频分发',
@@ -376,7 +408,7 @@ function trafficAndScenarioRow(r, pending) {
     ai: 'AI 应用 · 主流大模型访问',
     shield: '免盾浏览 · 验证码与邮局信誉',
   };
-  const rightBody = scenarios.length ? h('div', {class: 'scenario-stack'}, scenarios.map(sc => {
+  const leftBody = scenarios.length ? h('div', {class: 'scenario-stack'}, scenarios.map(sc => {
     const pts = Math.max(0, Math.min(10, Number(sc.score) || 0));
     const segs = Array.from({length: 10}, (_, i) => h('i', {class: i < pts ? 'on' : null}));
     return h('div', {class: 'sc-row-card'},
@@ -387,26 +419,22 @@ function trafficAndScenarioRow(r, pending) {
         h('span', {class: 'sc-pts'}, `${pts} / ${sc.max || 10}`)),
       h('div', {class: 'sc-seg-bar', 'data-tone': sc.tone, role: 'img', 'aria-label': `${sc.name} ${pts}/10`}, segs),
       sc.detail ? h('p', {class: 'sc-desc'}, sc.detail) : null);
-  })) : h('div', {class: 'hb-panel'},
-    empty(pending ? '正在根据原生性、网络类型与信誉信号生成各业务场景评估…' : '信誉数据不足，暂无法生成场景可用性参考'));
+  })) : empty(pending ? '正在根据原生性、网络类型与信誉信号生成各业务场景评估…' : '信誉数据不足，暂无法生成场景可用性参考');
 
-  const rightCard = richCard(
+  const leftCard = richCard(
     'scenarioCard',
     '业务场景可用性参考',
     '结合原生地区、机房/家宽属性与风控记录评估常见场景表现',
     null,
-    rightBody
+    leftBody
   );
 
-  return h('div', {id: 'insightGrid', class: 'grid2'}, leftCard, rightCard);
-}
-
-// Band 3: Left (Anonymizer, Lease & Masquerade Audit) + Right (/24 Neighbor Density, Threat Telemetry & Port Exposure)
-function riskAndSubnetRow(r, pending) {
+  // Right Card: Risk Matrix & Cross-Audit Notes
   const f = r.flags || {}, a = r.audit || {}, act = a.activity || {};
   const torHit = Boolean(f.is_tor || act.tor_exit || act.tor_relay);
   const leaseHit = Boolean(f.is_leased || a.lease?.leased);
   const masqHit = Boolean(a.flow?.masquerade);
+  const sigs = Array.isArray(r.traffic?.bot_signals) ? r.traffic.bot_signals : [];
 
   const riskSummary = a.risk_summary || (pending ? '评估中…' : (f.is_tor || f.is_abuser ? '发现明显威胁标记' : f.is_proxy || f.is_vpn || leaseHit ? '存在代理或租赁特征' : '未发现明显威胁'));
   const riskTone = a.risk_tone || (f.is_tor || f.is_abuser ? 'bad' : f.is_proxy || f.is_vpn || leaseHit ? 'warn' : 'good');
@@ -452,9 +480,12 @@ function riskAndSubnetRow(r, pending) {
     h('div', {class: 'audit-note-item'},
       h('span', {class: 'an-k'}, '流量方向交叉核验', masqHit ? pill('疑似伪家宽', 'bad') : null),
       h('span', {class: 'an-v'}, flowDetail)),
+    sigs.length ? h('div', {class: 'audit-note-item'},
+      h('span', {class: 'an-k'}, '观测到的自动化线索'),
+      h('ul', {class: 'hb-signals'}, sigs.map(s => h('li', null, s)))) : null,
     specialFlags.length ? h('div', {class: 'tags'}, specialFlags) : null);
 
-  const leftCard = richCard(
+  const rightCard = richCard(
     'securityCard',
     '风险与技术核验',
     '识别匿名代理隧道、商业租赁重宣告网段与伪家宽特征',
@@ -464,7 +495,12 @@ function riskAndSubnetRow(r, pending) {
     auditNotes
   );
 
-  // Right Card: /24 (/48) Neighbor Contamination + Threat Telemetry + Shodan Port Exposure
+  return h('div', {id: 'insightGrid', class: 'grid2'}, leftCard, rightCard);
+}
+
+// Band 4: Left (/24 Neighbor Density, Threat Telemetry & Port Exposure) + Right (Live Probe & CLI Workbench)
+function subnetAndWorkbenchRow(r, pending) {
+  const a = r.audit || {}, act = a.activity || {};
   const nb = a.neighbor;
   const totalCells = 32;
   let dirtyCells = 0, dirtyCls = 'dirty-warn';
@@ -518,7 +554,7 @@ function riskAndSubnetRow(r, pending) {
     ] : null),
     cleanRow('离线名单命中', listHits.length ? listHits.slice(0, 6).map(x => pill(x, 'warn')) : null));
 
-  const rightCard = richCard(
+  const leftCard = richCard(
     'subnetCard',
     '网段连带与暴露面审计',
     '核查同子网邻居连带污染、多源蜜罐遥测与公网开放端口',
@@ -528,7 +564,63 @@ function riskAndSubnetRow(r, pending) {
     exposureBox
   );
 
-  return h('div', {id: 'auditGrid', class: 'grid2'}, leftCard, rightCard);
+  // Right Card: On-Demand Active Probe + CLI/JSON Quick Calls
+  let tz = '';
+  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch {}
+  const lang = navigator.language || (navigator.languages && navigator.languages[0]) || '';
+  const validIP = normIP(r.ip);
+  const baseOrigin = location.origin;
+  const textCmd = `curl -fsSL ${baseOrigin}/${validIP ? validIP : ''}`.replace(/\/$/, '');
+  const jsonPath = validIP ? `/json/${validIP}` : '/json';
+  const jsonCmd = `curl -fsSL ${baseOrigin}${jsonPath}`;
+
+  let visitorHandshake = null;
+  if (r.traffic?.request_probe) {
+    const rp = r.traffic.request_probe;
+    const env = inspectBrowserClient();
+    const autoPct = clamp(Math.round(rp.automation_share * 0.65 + env.autoPts * 0.35));
+    const humanShare = 100 - autoPct;
+    visitorHandshake = cleanRow('当前访客握手', autoPct >= 45
+      ? pill(`脚本倾向 ${autoPct}% · ${rp.client_family || '客户端'}`, 'warn')
+      : dot(`真人终端特征 ${humanShare}% · ${rp.client_family || '标准浏览器'}${rp.proto ? ' (' + rp.proto + ')' : ''}`, 'ok'));
+  }
+
+  const cliRow = (label, cmd) => h('div', {class: 'cli-row'},
+    h('code', {class: 'cli-code', title: cmd}, cmd),
+    h('button', {type: 'button', class: 'btn sm', 'aria-label': '复制' + label, onclick: e => copy(cmd, e.currentTarget)}, '复制'));
+
+  const rightCard = richCard(
+    'workbenchCard',
+    '实时连通与终端接口',
+    '按需实测当前浏览器出口分流、443 借证伪装，或通过终端拉取报告',
+    null,
+    h('div', {class: 'wb-card-body'},
+      visitorHandshake,
+      h('ul', {class: 'wb-checklist'},
+        h('li', null, '出口 TCP/443 证书与 Reality 借证核验'),
+        h('li', null, 'Cloudflare / ChatGPT / Claude 分流对照'),
+        h('li', null, 'DNS / EDNS 客户端子网区域比对'),
+        h('li', null, 'WebRTC STUN 候选与协议栈指纹')),
+      h('div', {class: 'wb-actions'},
+        h('button', {
+          id: 'deepProbeBtn',
+          type: 'button',
+          class: 'btn primary',
+          disabled: pending,
+          onclick: () => runInlineProbe(),
+        }, activeProbeState?.running ? '正在实测…' : activeProbeState ? '重新实测连接与 443' : '开始连接与 443 实测'),
+        (tz || lang) ? h('span', {class: 'mut mono', style: {'font-size': '12px'}},
+          ['时区 ' + (tz || '未知'), lang ? '语言 ' + lang : ''].filter(Boolean).join(' · ')) : null),
+      h('div', {class: 'wb-cli-block'},
+        h('div', {class: 'wb-cli-head'}, h('span', null, '终端命令与 JSON 接口'), ext(jsonPath, '查看原始 JSON')),
+        cliRow('终端纯文本命令', textCmd),
+        cliRow('JSON 接口命令', jsonCmd)))
+  );
+
+  return [
+    h('div', {id: 'auditGrid', class: 'grid2'}, leftCard, rightCard),
+    h('div', {id: 'probeInlineBody', class: 'probe-inline', 'aria-live': 'polite'}),
+  ];
 }
 
 // Score Details Modal (#scoreDetails)
@@ -591,7 +683,7 @@ function showScoreDetails(r, opener) {
 $('#scoreDetailsClose').addEventListener('click', () => scoreDialog.close());
 scoreDialog.addEventListener('close', () => { if (scoreDetailsOpener?.isConnected) scoreDetailsOpener.focus(); });
 
-// Band 4: Geography + Map (Left) & Consolidated Network / ASN Profile (Right)
+// Band 3: Geography + Map (Left) & Consolidated Network / ASN Profile (Right)
 function geoCard(g) {
   const lat = Number(g.lat) || 0, lon = Number(g.lon) || 0;
   const geoTiles = [
@@ -709,7 +801,7 @@ function netCard(n) {
   return card('网络信息', scaleStrip, list || empty('没有网络信息'));
 }
 
-// Band 5: Inline Active Connection & 443 Reality Workbench + CLI/API Quick Snippets
+// Inline Active Connection & 443 Reality Probe Engine
 let seq = 0, ctl = null, probeCtl = null, connModule = null, lastRendered = null, activeProbeState = null;
 
 function clearActiveProbe() {
@@ -893,53 +985,6 @@ async function runInlineProbe() {
   renderProbeInline();
 }
 
-function workbenchSection(r, pending) {
-  let tz = '';
-  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch {}
-  const lang = navigator.language || (navigator.languages && navigator.languages[0]) || '';
-  const validIP = normIP(r.ip);
-  const baseOrigin = location.origin;
-  const textCmd = `curl -fsSL ${baseOrigin}/${validIP ? validIP : ''}`.replace(/\/$/, '');
-  const jsonPath = validIP ? `/json/${validIP}` : '/json';
-  const jsonCmd = `curl -fsSL ${baseOrigin}${jsonPath}`;
-
-  const cliRow = (label, cmd) => h('div', {class: 'cli-row'},
-    h('code', {class: 'cli-code', title: cmd}, cmd),
-    h('button', {type: 'button', class: 'btn sm', 'aria-label': '复制' + label, onclick: e => copy(cmd, e.currentTarget)}, '复制'));
-
-  return h('section', {id: 'workbenchCard', class: 'card'},
-    h('div', {class: 'workbench-grid'},
-      h('div', {class: 'wb-pane'},
-        h('div', {class: 'card-title-group'},
-          h('h2', null, '实时连通与 443 伪装核验'),
-          h('p', {class: 'card-sub'}, '仅在点击后按需发起：检测你当前浏览器的真实公网出口、多目标分流一致性与 443 借证伪装')),
-        h('ul', {class: 'wb-checklist'},
-          h('li', null, '出口 TCP/443 证书与 Reality 借证核验'),
-          h('li', null, 'Cloudflare / ChatGPT / Claude 分流对照'),
-          h('li', null, 'DNS / EDNS 客户端子网区域比对'),
-          h('li', null, 'WebRTC STUN 候选与协议栈指纹')),
-        h('div', {class: 'wb-actions'},
-          h('button', {
-            id: 'deepProbeBtn',
-            type: 'button',
-            class: 'btn primary',
-            disabled: pending,
-            onclick: () => runInlineProbe(),
-          }, activeProbeState?.running ? '正在实测…' : activeProbeState ? '重新实测连接与 443' : '开始连接与 443 实测'),
-          (tz || lang) ? h('span', {class: 'mut mono', style: {'font-size': '12px'}},
-            ['本地时区 ' + (tz || '未知'), lang ? '语言 ' + lang : ''].filter(Boolean).join(' · ')) : null)),
-      h('div', {class: 'wb-pane wb-pane-right'},
-        h('div', {class: 'card-title-group'},
-          h('h2', null, '终端命令与 JSON 接口'),
-          h('p', {class: 'card-sub'}, '支持服务器终端无头直连查询或自动化脚本拉取结构化 JSON 报告')),
-        h('div', {class: 'cli-list'},
-          cliRow('终端纯文本命令', textCmd),
-          cliRow('JSON 接口命令', jsonCmd)),
-        h('div', {class: 'wb-actions'},
-          ext(jsonPath, '查看当前 IP 原始 JSON')))),
-    h('div', {id: 'probeInlineBody', class: 'probe-inline', 'aria-live': 'polite'}));
-}
-
 function setStatus(cls, ...kids) { statusEl.className = 'status' + (cls ? ' ' + cls : ''); statusEl.replaceChildren(...kids); }
 
 function render(r, pending = false, failed = false) {
@@ -947,12 +992,11 @@ function render(r, pending = false, failed = false) {
   const parts = [verdictCard(r, pending, failed)];
   if (r.mode && !r.bogon) {
     const busy = pending && !failed;
-    parts.push(trafficAndScenarioRow(r, busy));
-    parts.push(riskAndSubnetRow(r, busy));
+    parts.push(scenarioAndRiskRow(r, busy));
     const geo = geoCard(r.geo || {}), network = netCard(r.network || {});
     geo.classList.add('geo-card'); network.classList.add('net-card'); network.id = 'network';
     parts.push(h('div', {id: 'infraGrid', class: 'grid2'}, h('div', {class: 'col'}, geo, mapCard(r.geo || {})), network));
-    parts.push(workbenchSection(r, busy));
+    parts.push(...subnetAndWorkbenchRow(r, busy));
   } else dropMap();
   out.replaceChildren(...parts);
   out.classList.remove('stale');

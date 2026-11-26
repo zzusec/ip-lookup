@@ -851,18 +851,21 @@ test('human-vs-bot traffic ratio, multi-dimensional network audit and live visit
     await textIs(f.page, '#scoreLevel', '一般');
     assert.equal(await f.page.locator('#score .ring').getAttribute('data-tone'), 'fair');
     assert.equal(await f.page.locator('#result .spectrum-row').count(), 0);
-    assert.doesNotMatch(await f.page.locator('#result').innerText(), /人机流量|人类 31\.7%/);
+    assert.equal(await f.page.locator('.hb-bar:not(.dev)').count(), 1, 'human/bot bar renders once inside #result without duplication');
     const ringColor = await f.page.locator('#scoreValue').evaluate(el => getComputedStyle(el).color);
     assert.notEqual(ringColor, 'rgb(21, 128, 61)', '62 must not render in healthy green');
 
-    const trafficText = await f.page.locator('#trafficCard').innerText();
-    assert.match(trafficText, /人机流量与终端分布/);
-    assert.match(trafficText, /人类 31\.7%/);
-    assert.match(trafficText, /机器 68\.3%/);
-    assert.match(trafficText, /机器偏多/);
-    assert.match(trafficText, /桌面端 61\.5%/);
-    assert.match(trafficText, /移动端 38\.5%/);
-    assert.ok(trafficText.includes(unsafe), 'untrusted strings render as literal text');
+    // Single best-matching location in #result without listing multiple raw provider names
+    const summaryBody = await f.page.locator('#result .summary-body').innerText();
+    assert.doesNotMatch(summaryBody, /Merged-IP|DB-IP City Lite|IP2Location\.io/);
+
+    const vtText = await f.page.locator('#result #verdictTraffic').innerText();
+    assert.match(vtText, /人机流量/);
+    assert.match(vtText, /人类 31\.7%/);
+    assert.match(vtText, /机器 68\.3%/);
+    assert.match(vtText, /机器偏多/);
+    assert.match(vtText, /桌面端 61\.5%/);
+    assert.match(vtText, /移动端 38\.5%/);
 
     const scenarioText = await f.page.locator('#scenarioCard').innerText();
     assert.match(scenarioText, /业务场景可用性参考/);
@@ -876,6 +879,7 @@ test('human-vs-bot traffic ratio, multi-dimensional network audit and live visit
     assert.match(secText, /未检测到/);
     assert.match(secText, /IPXO/);
     assert.match(secText, /疑似伪家宽/);
+    assert.ok(secText.includes(unsafe), 'untrusted strings render as literal text');
 
     const subnetText = await f.page.locator('#subnetCard').innerText();
     assert.match(subnetText, /网段连带与暴露面审计/);
@@ -894,7 +898,7 @@ test('human-vs-bot traffic ratio, multi-dimensional network audit and live visit
     assert.match(netText, /Valid（路由源验证有效）/);
 
     const wbText = await f.page.locator('#workbenchCard').innerText();
-    assert.match(wbText, /实时连通与 443 伪装核验/);
+    assert.match(wbText, /实时连通与终端接口/);
     assert.match(wbText, /终端命令与 JSON 接口/);
 
     assert.equal(await f.page.evaluate(() => window.__trafficXSS), undefined);

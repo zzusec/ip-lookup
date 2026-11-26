@@ -23,13 +23,16 @@ import (
 
 // Server routes requests to the lookup service.
 type Server struct {
-	Lookup       *lookup.Service
-	Web          fs.FS  // contains index.html and static/
-	TrustProxy   bool   // read X-Real-IP / X-Forwarded-* from loopback peers
-	RiskCheckURL string // optional fallback URL for the sibling risk-check tab
-	Log          *slog.Logger
-	limit        *rateLimiter
-	index        []byte
+	Lookup             *lookup.Service
+	Web                fs.FS  // contains index.html and static/
+	TrustProxy         bool   // read X-Real-IP / X-Forwarded-* from loopback peers
+	RiskCheckURL       string // optional fallback URL for the sibling risk-check tab
+	DisableActiveProbe bool   // skip outbound :443 probes on /api/probe when set
+	Log                *slog.Logger
+	limit              *rateLimiter
+	probeLimit         *rateLimiter
+	tlsCache           *tlsProbeCache
+	index              []byte
 }
 
 func (s *Server) Handler() (http.Handler, error) {
@@ -37,12 +40,14 @@ func (s *Server) Handler() (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.limit = newRateLimiter(20, time.Minute) // full lookups of arbitrary addresses per client
+	s.limit = newRateLimiter(20, time.Minute)      // full lookups of arbitrary addresses per client
+	s.probeLimit = newRateLimiter(12, time.Minute) // active self-connection probes per client
+	s.tlsCache = newTLSProbeCache()
 	static, err := fs.Sub(s.Web, "static")
 	if err != nil {
 		return nil, err
 	}
-	if s.index, err = versioned(idx, static, "style.css", "app.js", "favicon.svg"); err != nil {
+	if s.index, err = versioned(idx, static, "style.css", "app.js", "connection.js", "favicon.svg"); err != nil {
 		return nil, err
 	}
 	mux := http.NewServeMux()
@@ -50,6 +55,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok\n")) })
 	mux.HandleFunc("GET /api/ip", s.apiIP)
 	mux.HandleFunc("GET /api/lookup", s.apiLookup)
+	mux.HandleFunc("GET /api/probe", s.apiProbe)
 	mux.HandleFunc("GET /api/sources", s.apiSources)
 	mux.HandleFunc("GET /json", s.jsonLookup)
 	mux.HandleFunc("GET /json/{ip}", s.jsonLookup)

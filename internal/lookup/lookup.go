@@ -130,21 +130,43 @@ func (s *Service) finish(o *sources.Out) {
 		}
 	}
 	if len(n.RDNS) == 0 {
-		if v := firstOf(h, "rdns:ipinfo", "rdns:ip-api"); v != "" {
+		if v := firstOf(h, "rdns:ipinfo", "rdns:ip-api", "rdns:blackbox"); v != "" {
 			n.RDNS = []string{v} // reported by a provider, FCrDNS stays unknown
 		}
 	}
 	names = append(names, n.ASName, n.Org, n.ISP)
+	lease := classify.DetectLease(append([]string{n.NetName}, names...)...)
+	if lease.Leased {
+		o.Signal("leased", "地址租赁审计", lease.Broker, 70)
+	}
 	fillCountries(r)
 	sig := append([]model.Signal{}, o.Sig...)
 	sig = append(sig, classify.OrgText(names)...)
 	sig = append(sig, classify.RDNS(n.RDNS)...)
 	r.Verdict, r.Flags = classify.Decide(sig)
+	flow := classify.AuditFlow(r.Verdict, r.Flags, n.PeeringDB, lease)
+	if r.Audit != nil || lease.Leased || flow != nil {
+		if r.Audit == nil {
+			r.Audit = &model.NetworkAudit{}
+		}
+		r.Audit.Lease = lease
+		r.Audit.Flow = flow
+	} else if r.Mode == "full" {
+		r.Audit = &model.NetworkAudit{Lease: lease}
+	}
 	// RIR delegation statistics are the authoritative registration country;
 	// the others are fallbacks when it is unavailable.
 	reg := []string{h["reg_cc:rir"], h["reg_cc:rdap"], h["reg_cc:cymru"], h["reg_cc:ipyou"], h["reg_cc:merged"]}
 	r.Native = classify.Native(reg, r.Geo.CountryCode, n.Registry)
+	if n.ASTypeLabel == "" {
+		n.ASTypeLabel = classify.FormatASTypeLabel(*n, r.Verdict)
+	}
 	r.Score = classify.Score(r)
+	r.Traffic = classify.BuildTraffic(r, r.Traffic, nil)
+	if r.Audit == nil && r.Mode != "" {
+		r.Audit = &model.NetworkAudit{Lease: lease}
+	}
+	classify.PopulateThreatAndScenarios(r)
 }
 
 func firstOf(h map[string]string, keys ...string) string {

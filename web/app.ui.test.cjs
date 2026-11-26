@@ -22,6 +22,7 @@ let browser, server, origin;
 before(async () => {
   const assets = new Map([
     ['/static/app.js', ['static/app.js', 'application/javascript']],
+    ['/static/connection.js', ['static/connection.js', 'application/javascript']],
     ['/static/style.css', ['static/style.css', 'text/css']],
     ['/static/favicon.svg', ['static/favicon.svg', 'image/svg+xml']],
     ['/static/vendor/leaflet/leaflet.js', ['static/vendor/leaflet/leaflet.js', 'application/javascript']],
@@ -68,7 +69,7 @@ function report(ip, value = ip === TARGET ? 42 : 85) {
     ip, version: ip.includes(':') ? 6 : 4, mode: 'full', queried_at: '2026-11-05T07:00:00Z', elapsed_ms: 12,
     verdict: {type: 'cdn', type_label: 'CDN', label: 'CDN', confidence: 'high',
       evidence: [{kind: 'cdn', source: 'Fixture Evidence Source', detail: 'Fixture Evidence Detail', weight: 15}]},
-    score: {value, level: value >= 95 ? '极度纯净' : value >= 80 ? '纯净' : value >= 50 ? '良好' : value >= 25 ? '中性' : '可疑',
+    score: {value, level: value >= 90 ? '极度纯净' : value >= 78 ? '纯净' : value >= 55 ? '一般' : value >= 30 ? '风险偏高' : '可疑',
       factors: [{name: 'Fixture Score Deduction', delta: -15}]},
     flags: {is_cdn: true},
     native: {status: 'native', label: '原生 IP', registered_country: 'AU', geo_country: 'AU', registry: 'Fixture Registry'},
@@ -777,3 +778,197 @@ for (const [name, width, height, colorScheme] of [
     } finally { await f.close(); }
   });
 }
+
+test('human-vs-bot traffic ratio, multi-dimensional network audit and live visitor probe render safely', async () => {
+  const unsafe = '<img src=x onerror="window.__trafficXSS=true">';
+  const f = await fixture({lookup: ip => {
+    const result = report(ip, 62);
+    result.verdict = {type: 'hosting', type_label: '机房', label: '机房 · 租赁网段', confidence: 'high',
+      usage: ['leased'], usage_labels: ['租赁网段']};
+    result.flags = {is_hosting: true, is_leased: true};
+    result.network = {
+      ...result.network,
+      asn: 906,
+      as_name: 'DMIT Cloud Services',
+      as_type_label: 'backbone（骨干网）',
+      as_ipv4_count: 91136,
+      as_prefixes_v4: 230,
+      as_prefixes_v6: 42,
+      as_created: '2022-06-10',
+      registrant: 'Private Customer',
+      rdns: ['Host-By.DMIT.com'],
+      fcrdns: true,
+      rpki: '有效',
+      peeringdb: {info_traffic: '500-1000Gbps', info_ratio: 'Heavy Outbound'},
+    };
+    result.traffic = {
+      mode: 'radar',
+      source: 'Cloudflare Radar',
+      window: '7d',
+      asn: 906,
+      human_pct: 31.7,
+      bot_pct: 68.3,
+      desktop_pct: 61.5,
+      mobile_pct: 38.5,
+      level: '机器偏多',
+      tone: 'poor',
+      note: 'Cloudflare Radar 观测 AS906 近 7 天 HTTP 请求人机占比',
+      bot_signals: ['StopForumSpam 记录垃圾注册/表单提交 3 次', unsafe],
+      request_probe: {
+        verdict: 'human_browser',
+        label: '标准浏览器真人交互',
+        human_share: 94,
+        automation_share: 6,
+        proto: 'HTTP/2.0',
+        client_family: 'Chromium / Chrome',
+        checks: [{name: '客户端标识', status: 'pass', detail: '标准浏览器标识 ' + unsafe}],
+      },
+    };
+    result.audit = {
+      neighbor: {prefix: '69.63.223.0/24', flagged: 12, total: 256, density_pct: 4.7, level: '轻度连带', categories: ['公开代理']},
+      lease: {leased: true, broker: 'IPXO', detail: '商业租赁网段 ' + unsafe},
+      flow: {traffic_ratio: 'Heavy Outbound', ratio_label: '重度出向', masquerade: true, detail: '出向流量异常'},
+      activity: {spam_reports: 3, dshield_packets: 28, dshield_targets: 4, otx_pulses: 2, tor_neighbors: 1},
+      risk_summary: '存在代理或租赁特征',
+      risk_tone: 'warn',
+      abuse_level: '纯净',
+      abuse_tone: 'good',
+      honeypot_status: '纯净',
+      honeypot_tone: 'good',
+      scenarios: [
+        {id: 'tiktok', name: 'TikTok', score: 6, max: 10, status: '可用', tone: 'warn', detail: '机房网段可用'},
+        {id: 'social', name: '社媒运营', score: 6, max: 10, status: '可用', tone: 'warn', detail: '机房网段可用'},
+        {id: 'ai', name: 'AI 应用', score: 7, max: 10, status: '可以尝试', tone: 'warn', detail: '原生机房段'},
+        {id: 'shield', name: '免盾浏览', score: 7, max: 10, status: '可用', tone: 'warn', detail: '未见黑名单'},
+      ],
+    };
+    return {json: result};
+  }});
+  try {
+    await f.page.goto(origin);
+    await settled(f.page, SELF, 62);
+    // 62 must show amber "一般" (data-tone="fair") rather than green "良好".
+    await textIs(f.page, '#scoreLevel', '一般');
+    assert.equal(await f.page.locator('#score .ring').getAttribute('data-tone'), 'fair');
+    const ringColor = await f.page.locator('#scoreValue').evaluate(el => getComputedStyle(el).color);
+    assert.notEqual(ringColor, 'rgb(21, 128, 61)', '62 must not render in healthy green');
+
+    const profileText = await f.page.locator('#profileGrid').innerText();
+    assert.match(profileText, /使用场景 \/ 类型/);
+    assert.match(profileText, /Hosting（机房托管）/);
+    assert.match(profileText, /人类 31\.7%/);
+    assert.match(profileText, /机器 68\.3%/);
+    assert.match(profileText, /机器偏多/);
+    assert.match(profileText, /TikTok/);
+    assert.match(profileText, /AI 应用/);
+    assert.match(profileText, /可以尝试/);
+    assert.match(profileText, /ASN \/ 运营商/);
+    assert.match(profileText, /backbone（骨干网）/);
+    assert.match(profileText, /91,136/);
+    assert.match(profileText, /500-1000Gbps/);
+    assert.match(profileText, /2022-06-10/);
+    assert.match(profileText, /Private Customer/);
+
+    const matrixText = await f.page.locator('#matrixGrid').innerText();
+    assert.match(matrixText, /技术指标/);
+    assert.match(matrixText, /否（公网可达）/);
+    assert.match(matrixText, /Host-By\.DMIT\.com/);
+    assert.match(matrixText, /IP 情报（威胁指标）/);
+    assert.match(matrixText, /✓ Valid（有效）/);
+    assert.match(matrixText, /风险深度检测/);
+    assert.match(matrixText, /未检测到/);
+
+    const card = f.page.locator('#trafficCard');
+    assert.equal(await card.isVisible(), true);
+    const cardText = await card.innerText();
+    assert.match(cardText, /人机流量比例分布/);
+    assert.match(cardText, /61\.5%/);
+    assert.match(cardText, /38\.5%/);
+    assert.match(cardText, /当前访客实时人机特征探测/);
+    assert.match(cardText, /DShield 28 包/);
+    assert.ok(cardText.includes(unsafe), 'untrusted strings render as literal text');
+    assert.equal(await f.page.evaluate(() => window.__trafficXSS), undefined);
+    await screenshot(f.page, 'traffic-audit');
+    await onlyExpectedTraffic(f);
+  } finally { await f.close(); }
+});
+
+test('on-demand connection & 443 Reality probe runs only after user click and resets on new lookup', async () => {
+  const f = await fixture();
+  try {
+    let probeHits = 0;
+    await f.page.route('**/api/probe*', async route => {
+      probeHits++;
+      await route.fulfill({
+        json: {
+          ip: SELF,
+          version: 4,
+          queried_at: '2026-11-25T12:00:00Z',
+          request_probe: {
+            verdict: 'human_browser',
+            label: '标准浏览器真人交互',
+            human_share: 95,
+            automation_share: 5,
+            proto: 'HTTP/2.0',
+            client_family: 'Chromium / Chrome',
+            checks: [{name: '客户端标识', status: 'pass', detail: '标准浏览器'}],
+          },
+          tls443: {
+            probed: true,
+            port_open: true,
+            tls_active: true,
+            tls_version: 'TLS 1.3',
+            subject_cn: 'www.microsoft.com',
+            sans: ['www.microsoft.com'],
+            reality_suspect: true,
+            reality_brand: 'Microsoft / Bing',
+            reality_domain: 'www.microsoft.com',
+            verdict: 'reality_suspect',
+            detail: '非 Microsoft / Bing 官方自治系统却返回其有效域名证书（www.microsoft.com），疑似 VLESS-Reality 借证伪装节点',
+            rtt_ms: 19,
+          },
+        },
+      });
+    });
+
+    await f.page.goto(origin);
+    await settled(f.page, SELF, 85);
+    assert.equal(probeHits, 0, 'active probe must never fire automatically on page load');
+    assert.equal(f.requests.some(({url}) => /connection\.js/.test(url.pathname)), false);
+
+    // Stub IPConnection right before clicking so no real STUN or external probe runs.
+    await f.page.evaluate(() => {
+      window.IPConnection = {
+        async collect({onUpdate}) {
+          const snap = {
+            startedAt: '2026-11-25T12:00:00Z',
+            finishedAt: '2026-11-25T12:00:01Z',
+            environment: {timeZone: 'Asia/Shanghai', offsetMinutes: 480, languages: ['zh-CN']},
+            probes: [
+              {id: 'site', label: '本站观察', status: 'ok', data: {ip: '1.1.1.1', version: 4}},
+              {id: 'cf', label: 'Cloudflare', status: 'ok', data: {ip: '1.1.1.1', loc: 'HK', colo: 'HKG'}},
+              {id: 'rtc', label: 'WebRTC / STUN', status: 'ok', data: {publicIPs: [], localIPs: [], mdns: true}},
+            ],
+          };
+          if (onUpdate) onUpdate(snap);
+          return snap;
+        },
+        analyze() {
+          return [{id: 'rtc-local', level: 'info', title: 'WebRTC 仅观测到 mDNS 候选', detail: '未见公网旁路候选'}];
+        },
+      };
+    });
+
+    await f.page.locator('#deepProbeBtn').click();
+    await f.page.getByText('疑似 Reality 借证伪装', {exact: true}).waitFor();
+    assert.equal(probeHits, 1);
+    const panelText = await f.page.locator('#trafficCard').innerText();
+    assert.match(panelText, /www\.microsoft\.com/);
+    assert.match(panelText, /WebRTC 仅观测到 mDNS 候选/);
+
+    // Navigating to another IP clears the previous active probe results.
+    await submit(f.page, TARGET);
+    await settled(f.page, TARGET, 42);
+    assert.doesNotMatch(await f.page.locator('#out').innerText(), /疑似 Reality 借证伪装/);
+  } finally { await f.close(); }
+});

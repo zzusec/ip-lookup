@@ -9,7 +9,8 @@ import (
 // its response for one address includes any reputation evidence.
 func reputationSource(name string) bool {
 	switch name {
-	case "ip-api.com", "ipapi.is", "ipinfo.io", "proxycheck.io", "ipyou.net", "GreyNoise", "ipdata.co":
+	case "ip-api.com", "ipapi.is", "ipinfo.io", "proxycheck.io", "ipyou.net", "GreyNoise", "ipdata.co",
+		"IPQuery", "IPinfo Blackbox", "StopForumSpam":
 		return true
 	default:
 		return false
@@ -65,6 +66,21 @@ func reputationData(name string, raw []byte, addr netip.Addr) bool {
 		case "malicious", "benign":
 			return reputationBool(top, "noise", "riot")
 		}
+	case "IPQuery":
+		rsk := reputationObject(top["risk"])
+		return reputationBool(rsk, "is_vpn", "is_proxy", "is_tor", "is_datacenter") ||
+			reputationRisk(rsk["risk_score"])
+	case "IPinfo Blackbox":
+		sigs := reputationObject(top["signals"])
+		return reputationBool(sigs, "proxy", "tor", "hosting", "cloud", "vpnasn")
+	case "StopForumSpam":
+		var success int
+		if json.Unmarshal(top["success"], &success) != nil || success != 1 {
+			return false
+		}
+		ipObj := reputationObject(top["ip"])
+		var appears *int
+		return json.Unmarshal(ipObj["appears"], &appears) == nil && appears != nil && (*appears == 0 || *appears == 1)
 	}
 	return false
 }

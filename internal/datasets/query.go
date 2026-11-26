@@ -1,8 +1,13 @@
 package datasets
 
 import (
+	"math"
 	"net/netip"
+	"slices"
 	"strings"
+
+	"github.com/zzusec/ip-lookup/internal/cidr"
+	"github.com/zzusec/ip-lookup/internal/model"
 )
 
 type names map[string]string
@@ -162,4 +167,82 @@ func (m *Manager) ASLookup(asn uint32) (class string, tags []string, drop string
 		}
 	}
 	return class, tags, drop, dropped
+}
+
+var neighborCategoryLabel = map[string]string{
+	"abuse": "滥用黑名单",
+	"proxy": "公开代理",
+	"vpn":   "VPN 网段",
+	"tor":   "Tor 节点",
+}
+
+// NeighborDensity inspects the enclosing /24 (IPv4) or /48 (IPv6) across all
+// loaded abuse, proxy, VPN and Tor lists to detect polluted neighborhoods.
+func (m *Manager) NeighborDensity(a netip.Addr) *model.NeighborDensity {
+	if m == nil || !a.IsValid() {
+		return nil
+	}
+	a = a.Unmap().WithZone("")
+	bits := 24
+	if a.Is6() {
+		bits = 48
+	}
+	p, err := a.Prefix(bits)
+	if err != nil {
+		return nil
+	}
+	var sets []*cidr.Set
+	catSeen := map[string]bool{}
+	var cats []string
+	loaded := 0
+	for _, e := range m.entries {
+		catLabel, relevant := neighborCategoryLabel[e.Spec.Category]
+		if !relevant {
+			continue
+		}
+		l := e.Get()
+		if l == nil || l.List == nil {
+			continue
+		}
+		loaded++
+		sets = append(sets, l.List)
+		if !catSeen[catLabel] && l.List.HasIntersection(p) {
+			catSeen[catLabel] = true
+			cats = append(cats, catLabel)
+		}
+	}
+	if loaded == 0 {
+		return nil
+	}
+	slices.Sort(cats)
+	nd := &model.NeighborDensity{Prefix: p.String(), Categories: cats, ListsLoaded: loaded}
+	addrs, blocks := cidr.UnionCountInPrefix(sets, p)
+	if a.Is4() {
+		nd.Total = 256
+		nd.Flagged = min(addrs, 256)
+		nd.DensityPct = math.Round(float64(nd.Flagged)*1000.0/256.0) / 10.0
+		switch {
+		case nd.Flagged == 0:
+			nd.Level = "纯净网段"
+		case nd.Flagged < 8:
+			nd.Level = "轻度连带"
+		case nd.Flagged < 32:
+			nd.Level = "中度污染"
+		default:
+			nd.Level = "高危脏段"
+		}
+		return nd
+	}
+	nd.Flagged = blocks
+	switch {
+	case blocks == 0:
+		nd.Level = "纯净网段"
+	case blocks < 4:
+		nd.Level = "轻度连带"
+	case blocks < 16:
+		nd.Level = "中度污染"
+	default:
+		nd.Level = "高危脏段"
+	}
+	return nd
 }

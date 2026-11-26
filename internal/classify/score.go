@@ -78,6 +78,22 @@ func Score(r *model.Result) model.Score {
 	if r.Native.Status == "broadcast" {
 		add("广播 IP", -10)
 	}
+	if f.Leased {
+		add("商业租赁网段", -8)
+	}
+	if r.Audit != nil {
+		if r.Audit.Flow != nil && r.Audit.Flow.Masquerade {
+			add("出向型流量与家宽声明冲突", -10)
+		}
+		if nb := r.Audit.Neighbor; nb != nil && nb.Total == 256 {
+			switch {
+			case nb.Flagged >= 32:
+				add(fmt.Sprintf("同 /24 风险邻居 %d/256", nb.Flagged), -8)
+			case nb.Flagged >= 8:
+				add(fmt.Sprintf("同 /24 风险邻居 %d/256", nb.Flagged), -4)
+			}
+		}
+	}
 	listed := 0
 	for _, d := range r.DNSBL {
 		if d.Listed {
@@ -99,21 +115,33 @@ func Score(r *model.Result) model.Score {
 		add(fmt.Sprintf("第三方风险分均值 %d", sum/len(r.Risk)), -sum/len(r.Risk)/4)
 	}
 	s.Value = max(0, min(100, s.Value))
-	s.Level = Level(s.Value)
+	s.Level, s.Tone = LevelAndTone(s.Value)
 	s.DataStatus, s.Coverage = scoreCoverage(r, len(s.Factors) > 0)
+	if s.DataStatus == "unavailable" {
+		s.Tone = "unknown"
+	}
 	return s
 }
 
 func Level(v int) string {
+	lvl, _ := LevelAndTone(v)
+	return lvl
+}
+
+// LevelAndTone pairs each score band with an unambiguous semantic color tier:
+// green is reserved strictly for clean addresses (>=78), while 55..77 is amber
+// ("一般") and 30..54 is orange-red ("风险偏高").
+func LevelAndTone(v int) (level, tone string) {
 	switch {
-	case v >= 95:
-		return "极度纯净"
-	case v >= 80:
-		return "纯净"
-	case v >= 50:
-		return "良好"
-	case v >= 25:
-		return "中性"
+	case v >= 90:
+		return "极度纯净", "excellent"
+	case v >= 78:
+		return "纯净", "good"
+	case v >= 55:
+		return "一般", "fair"
+	case v >= 30:
+		return "风险偏高", "poor"
+	default:
+		return "可疑", "bad"
 	}
-	return "可疑"
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zzusec/ip-lookup/internal/classify"
 	"github.com/zzusec/ip-lookup/internal/model"
 )
 
@@ -90,7 +91,18 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request, full bool) (*model.
 	}
 	ctx, cancel := ctxTimeout(r, s.Lookup.Timeout+2*time.Second)
 	defer cancel()
-	return s.Lookup.Lookup(ctx, a, full), true
+	res := s.Lookup.Lookup(ctx, a, full)
+	if self && res != nil && res.Bogon == "" {
+		rp := s.inspectRequestProbe(r)
+		if res.Traffic != nil {
+			cp := *res.Traffic
+			cp.RequestProbe = rp
+			res.Traffic = &cp
+		} else {
+			res.Traffic = classify.BuildTraffic(res, nil, rp)
+		}
+	}
+	return res, true
 }
 
 func (s *Server) apiLookup(w http.ResponseWriter, r *http.Request) {

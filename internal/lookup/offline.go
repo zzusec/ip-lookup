@@ -96,6 +96,12 @@ func (s *Service) offline(o *sources.Out, a netip.Addr) (asn int, prefix netip.P
 	}
 	s.lists(o, a)
 	s.asSignals(o, asn)
+	if nb := s.Data.NeighborDensity(a); nb != nil {
+		if r.Audit == nil {
+			r.Audit = &model.NetworkAudit{}
+		}
+		r.Audit.Neighbor = nb
+	}
 	return asn, prefix
 }
 
@@ -105,6 +111,21 @@ func (s *Service) asnFromDBIP(a netip.Addr) (int, bool) {
 		return int(da.Number), true
 	}
 	return 0, false
+}
+
+// OriginASN returns the origin AS recorded in offline databases, or 0.
+func (s *Service) OriginASN(a netip.Addr) int {
+	if s == nil || s.Data == nil || !a.IsValid() {
+		return 0
+	}
+	var m datasets.MergedRecord
+	if _, ok, _ := s.Data.LookupMMDB("merged", a, &m); ok && m.ASN.Number != 0 {
+		return int(m.ASN.Number)
+	}
+	if n, ok := s.asnFromDBIP(a); ok {
+		return n
+	}
+	return 0
 }
 
 func orKeep(v, old string) string {

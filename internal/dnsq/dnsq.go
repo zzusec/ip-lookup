@@ -165,7 +165,7 @@ func fields(t string) []string {
 var Zones = []string{
 	"bl.spamcop.net", "dnsbl.dronebl.org", "b.barracudacentral.org", "dnsbl-1.uceprotect.net",
 	"psbl.surriel.com", "bl.blocklist.de", "all.s5h.net", "spam.dnsbl.anonmails.de", "bl.0spam.org",
-	"rbl.interserver.net", "truncate.gbudb.net", "bl.nordspam.com",
+	"rbl.interserver.net", "truncate.gbudb.net", "bl.nordspam.com", "bl.mailspike.net", "torexit.dan.me.uk",
 }
 
 func dnsblName(a netip.Addr, zone string) string { return abs(reversed(a) + "." + zone) }

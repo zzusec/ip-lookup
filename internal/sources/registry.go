@@ -115,8 +115,13 @@ func rdap() *Provider {
 				if n.Registry == "" {
 					n.Registry = reg
 				}
-				if org != "" && n.Org == "" {
-					n.Org = org
+				if org != "" {
+					if n.Registrant == "" {
+						n.Registrant = org
+					}
+					if n.Org == "" {
+						n.Org = org
+					}
 				}
 				n.Abuse = abuse
 				for _, ev := range d.Events {

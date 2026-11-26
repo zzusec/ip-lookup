@@ -37,25 +37,39 @@ func ipapiIs(key string) *Provider {
 			if err := json.Unmarshal(raw, &d); err != nil {
 				return err
 			}
-			// Free answers use strings; keyed answers use objects with more detail.
+			// Free answers use strings; keyed answers (and current v2 free JSON) use objects with more detail.
 			var asn int
-			var asName, company, ctype string
+			var asName, asCreated, asDomain, abuserScore, company, ctype string
 			var s string
 			if json.Unmarshal(d.ASN, &s) == nil {
 				asn, asName = asnOf(s)
 			} else {
 				var ao struct {
-					ASN  int
-					Org  string
-					Type string
+					ASN         int    `json:"asn"`
+					Org         string `json:"org"`
+					Type        string `json:"type"`
+					Domain      string `json:"domain"`
+					Created     string `json:"created"`
+					AbuserScore string `json:"abuser_score"`
 				}
 				json.Unmarshal(d.ASN, &ao)
 				asn, asName = ao.ASN, ao.Org
+				asDomain, asCreated, abuserScore = strings.TrimSpace(ao.Domain), strings.TrimSpace(ao.Created), strings.TrimSpace(ao.AbuserScore)
+				if len(asCreated) >= 10 {
+					asCreated = asCreated[:10]
+				}
 			}
 			if json.Unmarshal(d.Company, &company) != nil {
-				var co struct{ Name, Type string }
+				var co struct {
+					Name        string `json:"name"`
+					Type        string `json:"type"`
+					AbuserScore string `json:"abuser_score"`
+				}
 				json.Unmarshal(d.Company, &co)
 				company, ctype = co.Name, co.Type
+				if strings.TrimSpace(co.AbuserScore) != "" {
+					abuserScore = strings.TrimSpace(co.AbuserScore)
+				}
 			}
 			if d.Country == "" && asn == 0 {
 				return ErrNotFound
@@ -76,6 +90,18 @@ func ipapiIs(key string) *Provider {
 					o.Signal(f.kind, "ipapi.is", f.d, f.w)
 				}
 			}
+			o.Do(func(r *model.Result) {
+				n := &r.Network
+				if asCreated != "" && n.ASCreated == "" {
+					n.ASCreated = asCreated
+				}
+				if asDomain != "" && n.ASDomain == "" {
+					n.ASDomain = asDomain
+				}
+				if abuserScore != "" && n.AbuserScore == "" {
+					n.AbuserScore = abuserScore
+				}
+			})
 			return nil
 		}}
 }

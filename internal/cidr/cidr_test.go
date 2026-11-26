@@ -87,3 +87,51 @@ func TestEdgeLengths(t *testing.T) {
 		t.Error("nil Set should match nothing")
 	}
 }
+
+func TestUnionCountInPrefix(t *testing.T) {
+	b1 := NewBuilder()
+	b1.AddText("198.51.100.1", "a")
+	b1.AddText("198.51.100.2", "b")
+	b1.AddText("198.51.100.16/28", "sub") // 16 addresses: .16 .. .31
+	s1 := b1.Build()
+
+	b2 := NewBuilder()
+	b2.AddText("198.51.100.2", "dup")
+	b2.AddText("198.51.100.20", "inside-sub")
+	b2.AddText("198.51.100.32", "adjacent")
+	b2.AddText("255.255.255.250/31", "edge")
+	s2 := b2.Build()
+
+	addrs, blocks := UnionCountInPrefix([]*Set{s1, s2}, netip.MustParsePrefix("198.51.100.0/24"))
+	// .1 + .2 (2 contiguous) + .16..32 (17 contiguous) = 19 distinct addresses in 2 merged spans.
+	if addrs != 19 || blocks != 2 {
+		t.Fatalf("got addrs=%d blocks=%d, want 19, 2", addrs, blocks)
+	}
+	if !s1.HasIntersection(netip.MustParsePrefix("198.51.100.0/24")) {
+		t.Fatal("expected s1 intersection")
+	}
+	if s1.HasIntersection(netip.MustParsePrefix("203.0.113.0/24")) {
+		t.Fatal("unexpected intersection")
+	}
+	edgeAddrs, _ := UnionCountInPrefix([]*Set{s2}, netip.MustParsePrefix("255.255.255.0/24"))
+	if edgeAddrs != 2 {
+		t.Fatalf("edge /24 addrs=%d, want 2", edgeAddrs)
+	}
+
+	b3 := NewBuilder()
+	b3.AddText("198.51.0.0/16", "enclosing")
+	s3 := b3.Build()
+	fullAddrs, _ := UnionCountInPrefix([]*Set{s3}, netip.MustParsePrefix("198.51.100.0/24"))
+	if fullAddrs != 256 {
+		t.Fatalf("enclosing /16 should cover all 256 /24 addresses, got %d", fullAddrs)
+	}
+
+	bv6 := NewBuilder()
+	bv6.AddText("2001:db8:abcd:1::1", "h1")
+	bv6.AddText("2001:db8:abcd:2::/64", "sub6")
+	sv6 := bv6.Build()
+	_, v6Blocks := UnionCountInPrefix([]*Set{sv6}, netip.MustParsePrefix("2001:db8:abcd::/48"))
+	if v6Blocks != 2 {
+		t.Fatalf("IPv6 /48 blocks=%d, want 2", v6Blocks)
+	}
+}

@@ -15,7 +15,7 @@ import (
 var Types = []string{"cdn", "hosting", "mobile", "residential", "education", "government", "business"}
 
 // Usages are flags that describe how an address is used, independent of its type.
-var Usages = []string{"tor", "vpn", "proxy", "icloud_relay", "crawler", "abuser", "public_service", "anycast", "satellite"}
+var Usages = []string{"tor", "vpn", "proxy", "icloud_relay", "crawler", "abuser", "leased", "public_service", "anycast", "satellite"}
 
 var TypeLabels = map[string]string{
 	"residential": "家庭宽带", "mobile": "移动网络", "hosting": "机房", "cdn": "CDN",
@@ -24,7 +24,7 @@ var TypeLabels = map[string]string{
 
 var UsageLabels = map[string]string{
 	"tor": "Tor 出口", "vpn": "VPN", "proxy": "代理", "icloud_relay": "iCloud 专用代理",
-	"crawler": "爬虫", "abuser": "滥用记录", "public_service": "公共服务",
+	"crawler": "爬虫", "abuser": "滥用记录", "leased": "租赁网段", "public_service": "公共服务",
 	"anycast": "任播", "satellite": "卫星网络",
 }
 
@@ -111,7 +111,7 @@ func Decide(sig []model.Signal) (model.Verdict, model.Flags) {
 	f := model.Flags{
 		Tor: has("tor"), VPN: has("vpn"), Proxy: has("proxy"), Crawler: has("crawler"),
 		Abuser: has("abuser"), ICloudRelay: has("icloud_relay"), PublicService: has("public_service"),
-		Anycast: has("anycast"), Satellite: has("satellite"),
+		Anycast: has("anycast"), Satellite: has("satellite"), Leased: has("leased"),
 		Hosting:     v.Type == "hosting" || t["hosting"] >= flagMin,
 		CDN:         v.Type == "cdn" || t["cdn"] >= flagMin,
 		Mobile:      v.Type == "mobile",

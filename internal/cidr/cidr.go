@@ -199,3 +199,151 @@ func (s *Set) Len() int {
 	}
 	return len(s.v4) + len(s.v6)
 }
+
+type iv4 struct{ lo, hi uint32 }
+
+// spansInV4 appends the clamped [lo, hi] intersections of s with [qLo, qHi].
+func (s *Set) spansInV4(qLo, qHi uint32, dst []iv4) []iv4 {
+	if s == nil || len(s.v4) == 0 || qLo > qHi {
+		return dst
+	}
+	if i := find(s.v4, qLo, cmp.Compare[uint32]); i >= 0 {
+		hi := min(s.v4[i].hi, qHi)
+		dst = append(dst, iv4{lo: qLo, hi: hi})
+		if hi == qHi {
+			return dst
+		}
+	}
+	idx, _ := slices.BinarySearchFunc(s.v4, qLo, func(x span[uint32], t uint32) int {
+		if x.lo <= t {
+			return -1
+		}
+		return 1
+	})
+	for ; idx < len(s.v4) && s.v4[idx].lo <= qHi; idx++ {
+		dst = append(dst, iv4{lo: s.v4[idx].lo, hi: min(s.v4[idx].hi, qHi)})
+	}
+	return dst
+}
+
+// UnionCountInPrefix counts distinct addresses (for IPv4 prefixes up to /16) or
+// intersecting blocks (for IPv6) inside p across all given sets, deduplicating
+// overlapping ranges across lists.
+func UnionCountInPrefix(sets []*Set, p netip.Prefix) (addrs int, blocks int) {
+	if !p.IsValid() || len(sets) == 0 {
+		return 0, 0
+	}
+	p = p.Masked()
+	a, n := p.Addr(), p.Bits()
+	if a.Is4In6() && n >= 96 {
+		a, n = a.Unmap(), n-96
+	}
+	if a.Is4() {
+		lo := binary.BigEndian.Uint32(a.AsSlice())
+		var hi uint32
+		if n == 0 {
+			hi = ^uint32(0)
+		} else {
+			hi = lo | (^uint32(0) >> n)
+		}
+		var raw []iv4
+		for _, s := range sets {
+			raw = s.spansInV4(lo, hi, raw)
+		}
+		if len(raw) == 0 {
+			return 0, 0
+		}
+		slices.SortFunc(raw, func(x, y iv4) int {
+			if c := cmp.Compare(x.lo, y.lo); c != 0 {
+				return c
+			}
+			return cmp.Compare(y.hi, x.hi)
+		})
+		var total uint64
+		cur := raw[0]
+		merged := 1
+		for _, x := range raw[1:] {
+			if uint64(x.lo) <= uint64(cur.hi)+1 {
+				if x.hi > cur.hi {
+					cur.hi = x.hi
+				}
+				continue
+			}
+			total += uint64(cur.hi) - uint64(cur.lo) + 1
+			cur = x
+			merged++
+		}
+		total += uint64(cur.hi) - uint64(cur.lo) + 1
+		return int(min(total, uint64(^uint(0)>>1))), merged
+	}
+	a16 := a.As16()
+	lo := u128{binary.BigEndian.Uint64(a16[:8]), binary.BigEndian.Uint64(a16[8:])}
+	hi := lo
+	switch {
+	case n == 0:
+		hi = u128{^uint64(0), ^uint64(0)}
+	case n <= 64:
+		hi.hi |= ^uint64(0) >> n
+		hi.lo = ^uint64(0)
+	default:
+		hi.lo |= ^uint64(0) >> (n - 64)
+	}
+	type iv6 struct{ lo, hi u128 }
+	var raw []iv6
+	for _, s := range sets {
+		if s == nil || len(s.v6) == 0 {
+			continue
+		}
+		if i := find(s.v6, lo, cmp128); i >= 0 {
+			ehi := s.v6[i].hi
+			if cmp128(ehi, hi) > 0 {
+				ehi = hi
+			}
+			raw = append(raw, iv6{lo: lo, hi: ehi})
+		}
+		idx, _ := slices.BinarySearchFunc(s.v6, lo, func(x span[u128], t u128) int {
+			if cmp128(x.lo, t) <= 0 {
+				return -1
+			}
+			return 1
+		})
+		for ; idx < len(s.v6) && cmp128(s.v6[idx].lo, hi) <= 0; idx++ {
+			ehi := s.v6[idx].hi
+			if cmp128(ehi, hi) > 0 {
+				ehi = hi
+			}
+			raw = append(raw, iv6{lo: s.v6[idx].lo, hi: ehi})
+		}
+	}
+	if len(raw) == 0 {
+		return 0, 0
+	}
+	slices.SortFunc(raw, func(x, y iv6) int {
+		if c := cmp128(x.lo, y.lo); c != 0 {
+			return c
+		}
+		return cmp128(y.hi, x.hi)
+	})
+	cur := raw[0]
+	merged := 1
+	for _, x := range raw[1:] {
+		if cmp128(x.lo, cur.hi) <= 0 {
+			if cmp128(x.hi, cur.hi) > 0 {
+				cur.hi = x.hi
+			}
+			continue
+		}
+		cur = x
+		merged++
+	}
+	return 0, merged
+}
+
+// HasIntersection reports whether s intersects p at all.
+func (s *Set) HasIntersection(p netip.Prefix) bool {
+	if s == nil || !p.IsValid() {
+		return false
+	}
+	a, b := UnionCountInPrefix([]*Set{s}, p)
+	return a > 0 || b > 0
+}

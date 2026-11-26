@@ -850,6 +850,8 @@ test('human-vs-bot traffic ratio, multi-dimensional network audit and live visit
     // 62 must show amber "一般" (data-tone="fair") rather than green "良好".
     await textIs(f.page, '#scoreLevel', '一般');
     assert.equal(await f.page.locator('#score .ring').getAttribute('data-tone'), 'fair');
+    assert.equal(await f.page.locator('#result .spectrum-row').count(), 0);
+    assert.doesNotMatch(await f.page.locator('#result').innerText(), /人机流量|人类 31\.7%/);
     const ringColor = await f.page.locator('#scoreValue').evaluate(el => getComputedStyle(el).color);
     assert.notEqual(ringColor, 'rgb(21, 128, 61)', '62 must not render in healthy green');
 

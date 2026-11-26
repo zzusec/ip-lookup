@@ -123,18 +123,6 @@ main.wrap{padding-top:16px;padding-bottom:8px}
 .ring span{font-size:13px;font-weight:700;color:var(--ring-c)}
 .ring.wait b,.ring.wait span{color:var(--mut)}
 .ring .spin{width:20px;height:20px;margin-bottom:6px}
-.spectrum-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 12px;margin-bottom:6px;border-radius:9px;background:var(--soft);border:1px solid var(--line)}
-.spectrum-track-wrap{flex:1 1 220px;min-width:0}
-.spectrum-track{position:relative;height:9px;border-radius:999px;background:linear-gradient(90deg,#cf222e 0%,#d9480f 32%,#e09112 58%,#52b765 80%,#15803d 100%)}
-.spectrum-pin{position:absolute;top:-4px;width:4px;height:17px;border-radius:2px;background:var(--ink);box-shadow:0 0 0 2px var(--card);transform:translateX(-50%)}
-.spectrum-ticks{display:flex;justify-content:space-between;margin-top:5px;font-size:11px;color:var(--mut)}
-.spectrum-badge{display:inline-flex;align-items:baseline;gap:6px;padding:4px 12px;border-radius:8px;font-weight:700;flex:none}
-.spectrum-badge b{font-size:20px;line-height:1;font-family:var(--mono)}
-.spectrum-badge span{font-size:13px}
-.spectrum-badge.tone-excellent,.spectrum-badge.tone-good{background:var(--bg-good);color:var(--fg-good)}
-.spectrum-badge.tone-fair,.spectrum-badge.tone-warn{background:var(--bg-warn);color:var(--fg-warn)}
-.spectrum-badge.tone-poor{background:var(--bg-poor);color:var(--fg-poor)}
-.spectrum-badge.tone-bad{background:var(--bg-bad);color:var(--fg-bad)}
 .kv{display:grid;grid-template-columns:6.8em minmax(0,1fr);gap:0 16px;margin:0;font-size:13px}
 .kv dt,.kv dd{padding:6px 0;border-bottom:1px solid var(--soft)}
 .kv.fit{grid-template-columns:max-content minmax(0,1fr)}

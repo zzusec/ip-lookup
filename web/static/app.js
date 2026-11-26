@@ -209,24 +209,6 @@ function inlineHumanBot(tr) {
     tag(srcLabel));
 }
 
-function spectrumBar(r, pending, failed) {
-  const s = r.score || {};
-  if (pending || failed || r.bogon || s.data_status === 'unavailable' || typeof s.value !== 'number') return null;
-  const v = clamp(s.value);
-  const {level, tone} = scoreTier(v, s.tone, s.level);
-  return h('div', {class: 'spectrum-row', 'aria-hidden': 'true'},
-    h('div', {class: 'spectrum-track-wrap'},
-      h('div', {class: 'spectrum-track'},
-        h('span', {class: 'spectrum-pin', style: {left: v + '%'}})),
-      h('div', {class: 'spectrum-ticks mono'},
-        h('span', null, '0 高危'),
-        h('span', null, '30 偏高'),
-        h('span', null, '55 一般'),
-        h('span', null, '78 纯净'),
-        h('span', null, '100 可信'))),
-    h('div', {class: 'spectrum-badge tone-' + tone}, h('b', null, String(v)), h('span', null, level)));
-}
-
 const VERDICT_BORDER_VAR = {
   residential: 'var(--c-good)', mobile: 'var(--c-good)', hosting: 'var(--c-fair)',
   cdn: 'var(--acc)', business: 'var(--acc)', education: 'var(--acc)', government: 'var(--acc)',
@@ -239,7 +221,6 @@ function verdictCard(r, pending, failed = false) {
     h('p', {class: 'v-label'}, r.bogon ? '私网或保留地址' : v.label || v.type_label || (pending && !failed ? '识别中…' : '未知')),
     r.bogon ? h('p', null, r.bogon) : null);
   const body = h('div', {class: 'summary-body'},
-    spectrumBar(r, pending, failed),
     kv([
       ['ASN', n.asn && [ext('https://bgp.tools/as/' + n.asn, 'AS' + n.asn), n.as_name ? ' – ' + n.as_name : '']],
       ['AS 域名', n.as_domain],
@@ -250,8 +231,6 @@ function verdictCard(r, pending, failed = false) {
         v.type_label ? pill(v.type_label, typeTone) : null,
         (v.usage_labels || []).map((l, i) => pill(l, USAGE_TONE[v.usage?.[i]] || 'bad')),
         conf ? h('span', {class: 'conf c' + conf[1]}, '置信度', h('i'), h('i'), h('i'), ' ' + conf[0]) : null)],
-      ['人机流量', !pending && r.traffic && (r.traffic.mode === 'radar' || r.traffic.mode === 'estimated') &&
-        inlineHumanBot(r.traffic)],
     ]),
     h('p', {class: 'meta'},
       h('span', null, r.mode === 'full' ? '完整查询' : '快速查询（仅离线库）'),

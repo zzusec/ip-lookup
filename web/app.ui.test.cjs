@@ -302,11 +302,7 @@ test('the upper report shows IP type, geography and network while the removed lo
     const riskTab = f.page.locator('#riskTab');
     assert.equal(await riskTab.isVisible(), true);
     await textIs(f.page, '#riskTab', 'IP风控值检测');
-    const gh = f.page.locator('footer a.gh-link');
-    assert.equal(await gh.isVisible(), true);
-    assert.equal(await gh.getAttribute('href'), 'https://github.com/zzusec/ip-lookup');
-    assert.equal(await gh.getAttribute('target'), '_blank');
-    assert.equal(await gh.getAttribute('rel'), 'noopener noreferrer');
+    assert.equal(await f.page.locator('footer a.gh-link').count(), 0);
     assert.equal(await f.page.locator('#scoreDetails').isVisible(), false);
     assert.equal(await f.page.locator('#scoreDetails').evaluate(dialog => dialog.closest('#out')), null,
       'the native dialog must survive result replacement outside #out');

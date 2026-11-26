@@ -565,14 +565,15 @@ function subnetAndWorkbenchRow(r, pending) {
   );
 
   // Right Card: On-Demand Active Probe + CLI/JSON Quick Calls
-  let tz = '';
+  let tz = '', rawPath = '';
   try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch {}
+  try { rawPath = decodeURIComponent(location.pathname.slice(1)).replace(/\/+$/, ''); } catch {}
   const lang = navigator.language || (navigator.languages && navigator.languages[0]) || '';
-  const validIP = normIP(r.ip);
+  const explicitIP = normIP(rawPath);
   const baseOrigin = location.origin;
-  const textCmd = `curl -fsSL ${baseOrigin}/${validIP ? validIP : ''}`.replace(/\/$/, '');
-  const jsonPath = validIP ? `/json/${validIP}` : '/json';
-  const jsonCmd = `curl -fsSL ${baseOrigin}${jsonPath}`;
+  const textCmd = `curl -fsSL ${baseOrigin}`;
+  const jsonPath = explicitIP ? `/json/${explicitIP}` : '/json';
+  const jsonCmd = `curl -fsSL ${baseOrigin}/json`;
 
   let visitorHandshake = null;
   if (r.traffic?.request_probe) {

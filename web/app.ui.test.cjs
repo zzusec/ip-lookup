@@ -900,6 +900,7 @@ test('human-vs-bot traffic ratio, multi-dimensional network audit and live visit
     const wbText = await f.page.locator('#workbenchCard').innerText();
     assert.match(wbText, /实时连通与终端接口/);
     assert.match(wbText, /终端命令与 JSON 接口/);
+    assert.doesNotMatch(wbText, /\/1\.1\.1\.1/, 'CLI curl snippets must not append the visitor IP');
 
     assert.equal(await f.page.evaluate(() => window.__trafficXSS), undefined);
     await screenshot(f.page, 'traffic-audit');

@@ -568,10 +568,10 @@ function subnetAndWorkbenchRow(r, pending) {
   try { rawPath = decodeURIComponent(location.pathname.slice(1)).replace(/\/+$/, ''); } catch {}
   const lang = navigator.language || (navigator.languages && navigator.languages[0]) || '';
   const explicitIP = normIP(rawPath);
-  const baseOrigin = location.origin;
-  const textCmd = `curl -fsSL ${baseOrigin}`;
+  const cmdHost = location.port ? location.origin : location.hostname;
+  const textCmd = `curl ${cmdHost}`;
   const jsonPath = explicitIP ? `/json/${explicitIP}` : '/json';
-  const jsonCmd = `curl -fsSL ${baseOrigin}/json`;
+  const jsonCmd = `curl ${cmdHost}/json`;
 
   let visitorHandshake = null;
   if (r.traffic?.request_probe) {

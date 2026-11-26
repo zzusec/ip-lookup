@@ -855,47 +855,41 @@ test('human-vs-bot traffic ratio, multi-dimensional network audit and live visit
     const ringColor = await f.page.locator('#scoreValue').evaluate(el => getComputedStyle(el).color);
     assert.notEqual(ringColor, 'rgb(21, 128, 61)', '62 must not render in healthy green');
 
-    const profileText = await f.page.locator('#profileGrid').innerText();
-    assert.match(profileText, /使用场景 \/ 类型/);
-    assert.match(profileText, /Hosting（机房托管）/);
-    assert.match(profileText, /人类 31\.7%/);
-    assert.match(profileText, /机器 68\.3%/);
-    assert.match(profileText, /机器偏多/);
-    assert.match(profileText, /TikTok/);
-    assert.match(profileText, /AI 应用/);
-    assert.match(profileText, /可以尝试/);
-    assert.match(profileText, /ASN \/ 运营商/);
-    assert.match(profileText, /backbone（骨干网）/);
-    assert.match(profileText, /91,136/);
-    assert.match(profileText, /500-1000Gbps/);
-    assert.match(profileText, /2022-06-10/);
-    assert.match(profileText, /Private Customer/);
+    const trafficText = await f.page.locator('#trafficCard').innerText();
+    assert.match(trafficText, /人机流量与场景参考/);
+    assert.match(trafficText, /人类 31\.7%/);
+    assert.match(trafficText, /机器 68\.3%/);
+    assert.match(trafficText, /机器偏多/);
+    assert.match(trafficText, /桌面端 61\.5%/);
+    assert.match(trafficText, /移动端 38\.5%/);
+    assert.match(trafficText, /TikTok/);
+    assert.match(trafficText, /AI 应用/);
+    assert.match(trafficText, /可以尝试/);
+    assert.ok(trafficText.includes(unsafe), 'untrusted strings render as literal text');
 
-    const matrixText = await f.page.locator('#matrixGrid').innerText();
-    assert.match(matrixText, /技术指标/);
-    assert.match(matrixText, /否（公网可达）/);
-    assert.match(matrixText, /Host-By\.DMIT\.com/);
-    assert.match(matrixText, /IP 情报（威胁指标）/);
-    assert.match(matrixText, /✓ Valid（有效）/);
-    assert.match(matrixText, /风险深度检测/);
-    assert.match(matrixText, /未检测到/);
+    const secText = await f.page.locator('#securityCard').innerText();
+    assert.match(secText, /风险与技术核验/);
+    assert.match(secText, /未检测到/);
+    assert.match(secText, /IPXO/);
+    assert.match(secText, /疑似伪家宽/);
+    assert.match(secText, /DShield 28 包/);
+    assert.match(secText, /Valid（有效）/);
 
-    const card = f.page.locator('#trafficCard');
-    assert.equal(await card.isVisible(), true);
-    const cardText = await card.innerText();
-    assert.match(cardText, /人机流量比例分布/);
-    assert.match(cardText, /61\.5%/);
-    assert.match(cardText, /38\.5%/);
-    assert.match(cardText, /当前访客实时人机特征探测/);
-    assert.match(cardText, /DShield 28 包/);
-    assert.ok(cardText.includes(unsafe), 'untrusted strings render as literal text');
+    const netText = await f.page.locator('#network').innerText();
+    assert.match(netText, /backbone（骨干网）/);
+    assert.match(netText, /91,136/);
+    assert.match(netText, /500-1000Gbps/);
+    assert.match(netText, /2022-06-10/);
+    assert.match(netText, /Private Customer/);
+    assert.match(netText, /Host-By\.DMIT\.com/);
+
     assert.equal(await f.page.evaluate(() => window.__trafficXSS), undefined);
     await screenshot(f.page, 'traffic-audit');
     await onlyExpectedTraffic(f);
   } finally { await f.close(); }
 });
 
-test('on-demand connection & 443 Reality probe runs only after user click and resets on new lookup', async () => {
+test('on-demand connection & 443 Reality probe runs only after user click in dialog and closes on new lookup', async () => {
   const f = await fixture();
   try {
     let probeHits = 0;
@@ -936,6 +930,7 @@ test('on-demand connection & 443 Reality probe runs only after user click and re
     await f.page.goto(origin);
     await settled(f.page, SELF, 85);
     assert.equal(probeHits, 0, 'active probe must never fire automatically on page load');
+    assert.equal(await f.page.locator('#probeDetails').isVisible(), false);
     assert.equal(f.requests.some(({url}) => /connection\.js/.test(url.pathname)), false);
 
     // Stub IPConnection right before clicking so no real STUN or external probe runs.
@@ -962,15 +957,22 @@ test('on-demand connection & 443 Reality probe runs only after user click and re
     });
 
     await f.page.locator('#deepProbeBtn').click();
-    await f.page.getByText('疑似 Reality 借证伪装', {exact: true}).waitFor();
+    await f.page.locator('#probeDetails').waitFor({state: 'visible'});
+    await f.page.locator('#probeDetails').getByText('疑似 Reality 借证伪装', {exact: true}).waitFor();
     assert.equal(probeHits, 1);
-    const panelText = await f.page.locator('#trafficCard').innerText();
-    assert.match(panelText, /www\.microsoft\.com/);
-    assert.match(panelText, /WebRTC 仅观测到 mDNS 候选/);
+    const dialogText = await f.page.locator('#probeDetailsBody').innerText();
+    assert.match(dialogText, /www\.microsoft\.com/);
+    assert.match(dialogText, /当前访客实时人机特征明细/);
+    assert.match(dialogText, /WebRTC 仅观测到 mDNS 候选/);
+    await screenshot(f.page, 'probe-dialog', {fullPage: false});
 
-    // Navigating to another IP clears the previous active probe results.
-    await submit(f.page, TARGET);
+    // Navigating to another IP closes and clears the probe dialog.
+    await f.page.locator('#qi').evaluate((input, ip) => {
+      input.value = ip;
+      input.form.requestSubmit();
+    }, TARGET);
+    await f.page.locator('#probeDetails').waitFor({state: 'hidden'});
     await settled(f.page, TARGET, 42);
-    assert.doesNotMatch(await f.page.locator('#out').innerText(), /疑似 Reality 借证伪装/);
+    assert.equal((await f.page.locator('#probeDetailsBody').textContent()).trim(), '');
   } finally { await f.close(); }
 });

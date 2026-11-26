@@ -252,9 +252,13 @@ main.wrap{padding-top:18px;padding-bottom:12px}
 /* Footer & Score Details Dialog */
 .vlist{max-height:160px;overflow:auto}
 .stale{opacity:.45;transition:opacity .2s}
-.foot{padding-top:6px;padding-bottom:30px;font-size:12px;color:var(--mut);text-align:center}
-.gh-link{display:inline-flex;align-items:center;gap:5px;color:var(--mut)}
-.gh-link:hover{color:var(--acc)}
+.foot{padding-top:4px;padding-bottom:32px;font-size:12px;color:var(--mut)}
+.foot-in{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 16px;padding-top:14px;border-top:1px solid var(--line)}
+.foot-links{display:flex;align-items:center;flex-wrap:wrap;gap:2px}
+.foot-links a{color:var(--ink);font-weight:500}
+.foot-links a:hover{color:var(--acc)}
+.foot-btn{padding:0;border:0;background:transparent;color:var(--mut);font:inherit;font-weight:500;cursor:pointer}
+.foot-btn:hover{color:var(--ink)}
 .score-details-toggle{height:30px;padding:0 11px;font-size:12px;color:var(--acc);border-radius:6px}
 .score-details-toggle:disabled{opacity:.55;cursor:default}
 

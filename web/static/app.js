@@ -12,6 +12,14 @@ function siblingWhoHref(host) {
 }
 const derivedWhoHref = siblingWhoHref(location.hostname);
 if (riskTab && derivedWhoHref) riskTab.href = derivedWhoHref;
+const footerWhoWrap = $('#footerWhoWrap'), footerWhoLink = $('#footerWhoLink');
+if (footerWhoWrap && footerWhoLink && derivedWhoHref) {
+  footerWhoLink.href = derivedWhoHref;
+  footerWhoWrap.hidden = false;
+}
+$('#backTopBtn')?.addEventListener('click', () => {
+  try { scrollTo({top: 0, behavior: 'smooth'}); } catch { scrollTo(0, 0); }
+});
 
 const TYPE_TONE = {
   residential: 'good', mobile: 'good', education: 'info', business: 'info',

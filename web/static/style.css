@@ -225,10 +225,10 @@ main.wrap{padding-top:18px;padding-bottom:12px}
 .subnet-grid.pending i{background:var(--line)}
 .subnet-foot{display:flex;align-items:center;justify-content:space-between;gap:6px 12px;flex-wrap:wrap;font-size:12px;color:var(--mut)}
 
-.exposure-box{padding-top:10px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
-.clean-row{display:flex;align-items:flex-start;justify-content:space-between;gap:8px 14px;padding:5px 0;font-size:13px;min-width:0}
-.clean-k{color:var(--mut);flex:none}
-.clean-v{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap;text-align:right;min-width:0;overflow-wrap:anywhere}
+.exposure-box{padding-top:8px;border-top:1px solid var(--line)}
+.clean-row{display:grid;grid-template-columns:7.2em minmax(0,1fr);gap:0 14px;align-items:center;padding:5px 0;font-size:13px;min-width:0}
+.clean-k{color:var(--mut)}
+.clean-v{display:flex;align-items:center;justify-content:flex-start;gap:6px;flex-wrap:wrap;text-align:left;min-width:0;overflow-wrap:anywhere}
 
 /* Band 4 Right: Live Probe & CLI Card + Full-Width Inline Probe Expansion */
 .wb-card-body{display:flex;flex-direction:column;gap:12px}

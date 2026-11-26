@@ -540,17 +540,17 @@ function subnetAndWorkbenchRow(r, pending) {
   const listHits = (r.lists || []).map(l => l.label).filter(Boolean);
   const cleanRow = (k, v) => has(v) ? h('div', {class: 'clean-row'}, h('span', {class: 'clean-k'}, k), h('div', {class: 'clean-v'}, v)) : null;
 
-  const exposureBox = h('div', {class: 'exposure-box'},
-    cleanRow('公开暴露端口', openPorts.length
-      ? openPorts.slice(0, 14).map(p => tag(String(p)))
-      : (pending ? h('span', {class: 'mut'}, '正在查询暴露端口…') : dot('未见常见公开暴露端口', 'ok'))),
-    cleanRow('服务组件指纹', cpes.length ? cpes.slice(0, 6).map(c => tag(c)) : null),
-    cleanRow('协议与主机标签', portTags.length ? portTags.map(t => tag(t, 195)) : null),
-    cleanRow('关联漏洞编号', vulns.length ? [
+  const exposureBox = h('div', {class: 'exposure-box'}, kv([
+    ['公开暴露端口', openPorts.length
+      ? tags(openPorts.slice(0, 14))
+      : (pending ? h('span', {class: 'mut'}, '正在查询暴露端口…') : dot('未见常见公开暴露端口', 'ok'))],
+    ['服务组件指纹', tags(cpes.slice(0, 6))],
+    ['协议与主机标签', portTags.length ? tags(portTags, t => tag(t, 195)) : null],
+    ['关联漏洞编号', vulns.length ? h('div', {class: 'tags'},
       pill(`关联 ${vulns.length} 项 CVE`, 'bad'),
-      ...vulns.slice(0, 4).map(v => mono(v)),
-    ] : null),
-    cleanRow('离线名单命中', listHits.length ? listHits.slice(0, 6).map(x => pill(x, 'warn')) : null));
+      vulns.slice(0, 4).map(v => mono(v))) : null],
+    ['离线名单命中', listHits.length ? tags(listHits.slice(0, 6), x => pill(x, 'warn')) : null],
+  ]));
 
   const leftCard = richCard(
     'subnetCard',

@@ -23,6 +23,10 @@ var leaseBrokers = []struct {
 	{"ip-volume", "IP Volume"},
 	{"ipvolume", "IP Volume"},
 	{"ipv4.global", "IPv4.Global"},
+	{"ipv4 borrower", "PF IPv4 Borrower"},
+	{"borrower, llc", "IPv4 Borrower"},
+	{"packetfabric", "PacketFabric"},
+	{"unitas global", "Unitas Global"},
 	{"ipv4 mall", "IPv4 Mall"},
 	{"ipv4 market", "IPv4 Market"},
 	{"logicweb", "LogicWeb"},
@@ -76,8 +80,7 @@ func AuditFlow(v model.Verdict, f model.Flags, pdb *model.PeeringDB, lease *mode
 		out.Masquerade = true
 		out.Detail = "部分数据源标注为家庭宽带，但 PeeringDB 报告该自治系统以出向流量为主（" + out.TrafficRatio + "），呈现机房或内容分发特征"
 	case v.Type == "residential" && lease != nil && lease.Leased:
-		out.Masquerade = true
-		out.Detail = "标注为宽带但归属商业租赁商 " + lease.Broker + "，常见于租赁重宣告代理池"
+		out.Detail = "归属商业地址租赁商 " + lease.Broker + " 挂靠宽带自治系统宣告（常见于双 ISP 静态商宽/专线）"
 	case v.Type == "residential" && (out.TrafficRatio == "Mostly Inbound" || out.TrafficRatio == "Heavy Inbound"):
 		out.Detail = "入向下载流量占主导，与普通家庭终端上网特征一致"
 	case outbound && (f.Hosting || f.CDN):
@@ -392,8 +395,10 @@ func PopulateThreatAndScenarios(r *model.Result) {
 	switch {
 	case f.Tor || f.Abuser || dnsblHits >= 2 || abuseLists > 0:
 		a.RiskSummary, a.RiskTone = "发现明显威胁标记", "bad"
-	case f.Proxy || f.VPN || f.Leased || (a.Flow != nil && a.Flow.Masquerade):
-		a.RiskSummary, a.RiskTone = "存在代理或租赁特征", "warn"
+	case f.Proxy || f.VPN || (a.Flow != nil && a.Flow.Masquerade):
+		a.RiskSummary, a.RiskTone = "存在代理或流量伪装特征", "warn"
+	case f.Leased:
+		a.RiskSummary, a.RiskTone = "未发现恶意威胁（商业租赁网段）", "warn"
 	case f.Hosting || f.CDN:
 		a.RiskSummary, a.RiskTone = "未发现明显恶意威胁（机房段）", "good"
 	default:

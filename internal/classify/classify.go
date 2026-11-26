@@ -112,8 +112,8 @@ func Decide(sig []model.Signal) (model.Verdict, model.Flags) {
 		Tor: has("tor"), VPN: has("vpn"), Proxy: has("proxy"), Crawler: has("crawler"),
 		Abuser: has("abuser"), ICloudRelay: has("icloud_relay"), PublicService: has("public_service"),
 		Anycast: has("anycast"), Satellite: has("satellite"), Leased: has("leased"),
-		Hosting:     v.Type == "hosting" || t["hosting"] >= flagMin,
-		CDN:         v.Type == "cdn" || t["cdn"] >= flagMin,
+		Hosting:     v.Type == "hosting" || v.Type == "cdn" || (t["hosting"] >= flagMin && v.Type != "residential" && v.Type != "mobile"),
+		CDN:         v.Type == "cdn" || (t["cdn"] >= flagMin && v.Type != "residential" && v.Type != "mobile"),
 		Mobile:      v.Type == "mobile",
 		Residential: v.Type == "residential",
 	}

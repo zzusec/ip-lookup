@@ -44,6 +44,10 @@ func TestDecide(t *testing.T) {
 		{"one source cannot vote twice", []model.Signal{
 			sig("residential", "a", 25), sig("residential", "a", 25), sig("residential", "a", 25),
 		}, "unknown", "low", nil},
+		{"minority hosting does not set hosting flag on residential verdict", []model.Signal{
+			sig("residential", "a", 70), sig("residential", "b", 60), sig("residential", "c", 40),
+			sig("hosting", "d", 60), sig("leased", "audit", 70),
+		}, "residential", "high", []string{"leased"}},
 	}
 	for _, c := range cases {
 		v, f := Decide(c.sig)
@@ -58,6 +62,9 @@ func TestDecide(t *testing.T) {
 		}
 		if c.typ == "cdn" && (!f.CDN || !f.Hosting) {
 			t.Errorf("%s: cdn verdict should set is_cdn and is_hosting, got %+v", c.name, f)
+		}
+		if c.typ == "residential" && f.Hosting {
+			t.Errorf("%s: residential verdict must not simultaneously set is_hosting, got %+v", c.name, f)
 		}
 		if slices.Contains(c.usage, "tor") && !f.Tor {
 			t.Errorf("%s: is_tor not set", c.name)

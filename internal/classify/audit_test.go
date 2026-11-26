@@ -11,6 +11,10 @@ func TestDetectLeaseAndAuditFlow(t *testing.T) {
 	if !lease.Leased || lease.Broker != "IPXO" {
 		t.Fatalf("expected IPXO lease hit, got %+v", lease)
 	}
+	borrower := DetectLease("Verizon Business", "PF IPV4 Borrower, LLC")
+	if !borrower.Leased || borrower.Broker != "PF IPv4 Borrower" {
+		t.Fatalf("expected PF IPv4 Borrower lease hit, got %+v", borrower)
+	}
 	clean := DetectLease("China Telecom", "CHINANET-BACKBONE")
 	if clean.Leased {
 		t.Fatalf("unexpected lease hit: %+v", clean)
@@ -25,6 +29,17 @@ func TestDetectLeaseAndAuditFlow(t *testing.T) {
 	)
 	if flow == nil || !flow.Masquerade {
 		t.Fatalf("expected masquerade on residential + Heavy Outbound, got %+v", flow)
+	}
+
+	// Leased block announced under Mostly Inbound ISP -> lease noted, not outbound masquerade.
+	leasedInbound := AuditFlow(
+		model.Verdict{Type: "residential", Usage: []string{"leased"}},
+		model.Flags{Residential: true, Leased: true},
+		&model.PeeringDB{InfoRatio: "Mostly Inbound"},
+		borrower,
+	)
+	if leasedInbound == nil || leasedInbound.Masquerade || leasedInbound.Detail == "" {
+		t.Fatalf("expected non-masquerade lease note on Mostly Inbound ISP, got %+v", leasedInbound)
 	}
 
 	// Normal residential with Mostly Inbound -> clean.

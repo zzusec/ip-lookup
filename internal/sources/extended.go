@@ -348,7 +348,7 @@ func alienVaultOTX() *Provider {
 		},
 		Apply: func(o *Out, q Query, raw []byte) error {
 			var d struct {
-				FalsePositive bool `json:"false_positive"`
+				FalsePositive json.RawMessage `json:"false_positive"`
 				Validation    []struct {
 					Source string `json:"source"`
 					Name   string `json:"name"`
@@ -366,7 +366,7 @@ func alienVaultOTX() *Provider {
 			if d.PulseInfo == nil || d.PulseInfo.Count <= 0 {
 				return ErrNotFound
 			}
-			if d.FalsePositive {
+			if otxFalsePositive(d.FalsePositive) {
 				o.Hint("source_note:AlienVault OTX", "来源已标注误报/白名单，忽略脉冲计数")
 				return nil
 			}
@@ -397,6 +397,28 @@ func alienVaultOTX() *Provider {
 			return nil
 		},
 	}
+}
+
+func otxFalsePositive(raw json.RawMessage) bool {
+	s := strings.TrimSpace(string(raw))
+	if s == "" || s == "null" || s == "false" || s == "[]" {
+		return false
+	}
+	if s == "true" {
+		return true
+	}
+	var arr []struct {
+		Assessment string `json:"assessment"`
+	}
+	if err := json.Unmarshal(raw, &arr); err == nil {
+		for _, item := range arr {
+			if item.Assessment == "" || strings.EqualFold(item.Assessment, "accepted") {
+				return true
+			}
+		}
+		return false
+	}
+	return false
 }
 
 func torOnionoo() *Provider {

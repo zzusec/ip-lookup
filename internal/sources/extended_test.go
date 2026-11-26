@@ -86,9 +86,14 @@ func TestExtendedProvidersAndReputation(t *testing.T) {
 	if o2.Res.Audit != nil {
 		t.Fatalf("whitelisted OTX entry must not create threat activity: %+v", o2.Res.Audit)
 	}
-	otxHit := []byte(`{"false_positive":false,"pulse_info":{"count":4,"pulses":[{"name":"SSH Brute"}]}}`)
+	otxHit := []byte(`{"false_positive":[],"pulse_info":{"count":4,"pulses":[{"name":"SSH Brute"}]}}`)
 	if err := alienVaultOTX().Apply(o, q, otxHit); err != nil || o.Res.Audit.Activity.OTXPulses != 4 {
-		t.Fatalf("OTX hit failed: %v / %+v", err, o.Res.Audit.Activity)
+		t.Fatalf("OTX hit with array false_positive failed: %v / %+v", err, o.Res.Audit.Activity)
+	}
+	otxAcceptedFP := []byte(`{"false_positive":[{"assessment":"accepted"}],"pulse_info":{"count":6,"pulses":[{"name":"Noise"}]}}`)
+	oFP := &Out{Res: &model.Result{}}
+	if err := alienVaultOTX().Apply(oFP, q, otxAcceptedFP); err != nil || oFP.Res.Audit != nil {
+		t.Fatalf("OTX accepted false_positive array must be ignored: %v / %+v", err, oFP.Res.Audit)
 	}
 
 	// 6. Tor Onionoo

@@ -22,10 +22,6 @@ const USAGE_TONE = {
   leased: 'warn', crawler: 'warn', icloud_relay: 'info', public_service: 'info',
   anycast: 'info', satellite: 'info',
 };
-const VERDICT_BORDER_VAR = {
-  residential: 'var(--c-good)', mobile: 'var(--c-good)', hosting: 'var(--c-fair)',
-  cdn: 'var(--acc)', business: 'var(--acc)', education: 'var(--acc)', government: 'var(--acc)',
-};
 const CONF = {high: ['高', 3], medium: ['中', 2], low: ['低', 1]};
 const V4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 let zhRegion;
@@ -313,7 +309,7 @@ function verdictTrafficBox(r, state) {
 
 // Band 1: Top Summary Dossier (#result)
 function verdictCard(r, pending, failed = false) {
-  const v = r.verdict || {}, conf = CONF[v.confidence], borderColor = VERDICT_BORDER_VAR[v.type], n = r.network || {};
+  const v = r.verdict || {}, conf = CONF[v.confidence], n = r.network || {};
   const typeTone = TYPE_TONE[v.type] || 'neutral';
   const state = r.bogon ? 'bogon' : failed ? 'error' : pending ? 'pending' : '';
   const identity = h('div', {class: 'summary-identity'}, ipHead(r),
@@ -335,8 +331,7 @@ function verdictCard(r, pending, failed = false) {
       h('span', null, r.mode === 'full' ? '完整查询' : '快速查询（仅离线库）'),
       r.queried_at ? h('span', null, '查询于 ' + fmtTime(r.queried_at)) : null,
       r.elapsed_ms != null ? h('span', null, `耗时 ${r.elapsed_ms} ms`) : null));
-  return h('section', {id: 'result', 'aria-busy': String(Boolean(pending && !failed && !r.bogon)),
-    class: borderColor ? 'card verdict hue' : 'card verdict', style: borderColor ? {'--verdict-c': borderColor} : null},
+  return h('section', {id: 'result', 'aria-busy': String(Boolean(pending && !failed && !r.bogon)), class: 'card verdict'},
     identity, scoreBox(r, state), verdictTrafficBox(r, state), body);
 }
 

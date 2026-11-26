@@ -332,7 +332,9 @@ function verdictCard(r, pending, failed = false) {
       r.queried_at ? h('span', null, '查询于 ' + fmtTime(r.queried_at)) : null,
       r.elapsed_ms != null ? h('span', null, `耗时 ${r.elapsed_ms} ms`) : null));
   return h('section', {id: 'result', 'aria-busy': String(Boolean(pending && !failed && !r.bogon)), class: 'card verdict'},
-    identity, scoreBox(r, state), verdictTrafficBox(r, state), body);
+    identity,
+    h('div', {class: 'verdict-side'}, scoreBox(r, state), verdictTrafficBox(r, state)),
+    body);
 }
 
 function scoreBox(r, state) {
@@ -354,8 +356,9 @@ function scoreBox(r, state) {
       'aria-label': unknown ? level : `纯净度 ${v} 分，${level}`},
       h('b', {id: 'scoreValue'}, unknown ? '—' : String(v)), h('span', {id: 'scoreLevel'}, level)),
     h('div', {class: 'score-meta'},
-      h('span', {class: 'mut'}, '纯净度 ', h('span', {id: 'scoreTotal', hidden: state === 'bogon'}, '/100')),
-      !state && quality ? h('span', {class: 'score-data', title: '只统计实际返回安全字段或风险读数的信誉源；数据返回不代表安全保证。'}, quality + coverageText) : null,
+      h('div', {class: 'score-line'},
+        h('span', {class: 'mut'}, '纯净度 ', h('span', {id: 'scoreTotal', hidden: state === 'bogon'}, '/100')),
+        !state && quality ? h('span', {class: 'score-data', title: '只统计实际返回安全字段或风险读数的信誉源；数据返回不代表安全保证。'}, '· ' + quality + coverageText) : null),
       h('button', {id: 'scoreDetailsToggle', type: 'button', class: 'btn score-details-toggle', disabled: state === 'pending' || !r.mode,
         'aria-haspopup': 'dialog', 'aria-controls': 'scoreDetails', onclick: e => showScoreDetails(r, e.currentTarget)}, '评分详情')));
 }

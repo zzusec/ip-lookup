@@ -82,11 +82,10 @@ main.wrap{padding-top:18px;padding-bottom:12px}
 .empty{margin:0;color:var(--mut);font-size:13px}
 
 /* Band 1: Verdict Hero Dossier (Left: Identity + Single Best Geo KV; Right: Score Ring + Human/Bot Traffic Box) */
-.verdict{display:grid;grid-template-columns:minmax(0,1fr) 338px;grid-template-areas:"identity score" "body score" "body vtraffic";grid-template-rows:auto auto 1fr;gap:10px 28px;align-items:start}
+.verdict{display:grid;grid-template-columns:minmax(0,1fr) 338px;grid-template-areas:"identity side" "body side";grid-template-rows:auto 1fr;gap:10px 28px;align-items:stretch}
 .summary-identity{grid-area:identity;min-width:0}
 .summary-body{grid-area:body;min-width:0}
-.verdict>.score{grid-area:score}
-.verdict>.verdict-traffic{grid-area:vtraffic;align-self:end;width:100%}
+.verdict-side{grid-area:side;display:flex;flex-direction:column;gap:12px;min-width:0}
 .v-ip{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 #ipAddress{margin:0;font:600 21px/1.35 var(--mono);overflow-wrap:anywhere}
 .v-label{font-size:27px;line-height:1.25;font-weight:700;margin:6px 0 8px;letter-spacing:-.01em}
@@ -97,12 +96,13 @@ main.wrap{padding-top:18px;padding-bottom:12px}
 .bogon .v-label{margin-bottom:4px}
 .bogon p:last-child{margin:0}
 
-/* Purity Score Ring + Desktop Horizontal Score Card in Right Column */
-.score{display:flex;align-items:center;justify-content:center;gap:16px;padding:12px 14px;border-radius:10px;background:var(--soft);border:1px solid var(--line);width:100%}
-.score-meta{display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:0}
-.score-meta>.mut{font-size:12.5px;font-weight:600;color:var(--ink)}
+/* Purity Score Ring Card in Right Column */
+.score{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;padding:14px 16px;border-radius:10px;background:var(--soft);border:1px solid var(--line);width:100%;text-align:center}
+.score-meta{display:flex;flex-direction:column;align-items:center;gap:5px;min-width:0}
+.score-line{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;font-size:12.5px;color:var(--mut)}
+.score-line b{font-weight:600;color:var(--ink)}
 .score-data{font-size:12px;color:var(--mut);line-height:1.35;overflow-wrap:anywhere}
-.ring{--ring-c:var(--acc);position:relative;width:106px;height:106px;flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.ring{--ring-c:var(--acc);position:relative;width:112px;height:112px;flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .ring[data-tone=excellent]{--ring-c:var(--c-excellent)}
 .ring[data-tone=good]{--ring-c:var(--c-good)}
 .ring[data-tone=fair]{--ring-c:var(--c-fair)}
@@ -110,7 +110,7 @@ main.wrap{padding-top:18px;padding-bottom:12px}
 .ring[data-tone=bad]{--ring-c:var(--c-bad)}
 .ring.wait{--ring-c:var(--mut)}
 .ring::before{content:"";position:absolute;inset:0;border-radius:50%;background:conic-gradient(var(--ring-c) calc(var(--v)*1%),var(--line) 0);-webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 9px),#000 calc(100% - 8.5px));mask:radial-gradient(farthest-side,transparent calc(100% - 9px),#000 calc(100% - 8.5px))}
-.ring b{font-size:31px;line-height:1.08;color:var(--ring-c)}
+.ring b{font-size:32px;line-height:1.08;color:var(--ring-c)}
 .ring span{font-size:12.5px;font-weight:700;color:var(--ring-c)}
 .ring.wait b,.ring.wait span{color:var(--mut)}
 
@@ -283,10 +283,11 @@ main.wrap{padding-top:18px;padding-bottom:12px}
   .stat-strip.four{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (max-width:760px){
-  .verdict{grid-template-columns:minmax(0,1fr) 132px;grid-template-areas:"identity score" "body body" "vtraffic vtraffic";grid-template-rows:auto;gap:12px 10px}
-  .score{flex-direction:column;align-items:center;gap:6px;padding:0;background:transparent;border:0}
+  .verdict{grid-template-columns:minmax(0,1fr) 132px;grid-template-areas:"identity score" "body body" "vtraffic vtraffic";grid-template-rows:auto;gap:12px 10px;align-items:start}
+  .verdict-side{display:contents}
+  .verdict-side>.score{grid-area:score;flex:none;gap:6px;padding:0;background:transparent;border:0}
+  .verdict-side>.verdict-traffic{grid-area:vtraffic}
   .score-meta{align-items:center;text-align:center}
-  .score-meta>.mut{font-size:12px;font-weight:400;color:var(--mut)}
   .search{flex-basis:100%;max-width:none}
   .v-label{font-size:24px}
   .verdict .kv{grid-template-columns:max-content minmax(0,1fr)}

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>IP 类型查询</title>
-<meta name="description" content="查询出口 IP 的类型（家宽、机房、移动等）、纯净度和基础信息">
+<meta name="description" content="查询出口 IP 的类型（家宽、机房、移动等）、纯净度、人机流量比例、同段邻居审计与自治系统路由画像">
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/style.css">
 <script src="/static/app.js" defer></script>
@@ -44,10 +44,6 @@
 <dialog id="scoreDetails" aria-labelledby="scoreDetailsTitle">
   <div class="score-detail-head"><h2 id="scoreDetailsTitle">评分详情</h2><button id="scoreDetailsClose" type="button" class="btn" aria-label="关闭评分详情">关闭</button></div>
   <div id="scoreDetailsBody"></div>
-</dialog>
-<dialog id="probeDetails" aria-labelledby="probeDetailsTitle">
-  <div class="score-detail-head"><h2 id="probeDetailsTitle">实时连接与 443 伪装探测</h2><button id="probeDetailsClose" type="button" class="btn" aria-label="关闭连接探测">关闭</button></div>
-  <div id="probeDetailsBody"></div>
 </dialog>
 </body>
 </html>

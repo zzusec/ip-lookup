@@ -3,9 +3,8 @@ const $ = s => document.querySelector(s);
 const bootIP = $('#ipAddress')?.textContent || '';
 const out = $('#out'), statusEl = $('#status'), form = $('#q'), input = $('#qi'), qerr = $('#qerr');
 const scoreDialog = $('#scoreDetails'), scoreDetailsBody = $('#scoreDetailsBody');
-const probeDialog = $('#probeDetails'), probeDetailsBody = $('#probeDetailsBody');
 const riskTab = $('#riskTab');
-let scoreDetailsOpener = null, probeDetailsOpener = null;
+let scoreDetailsOpener = null;
 
 function siblingWhoHref(host) {
   host = String(host || '').trim().toLowerCase().replace(/:\d+$/, '').replace(/\.$/, '');
@@ -48,7 +47,7 @@ function h(tag, attrs, ...kids) {
 }
 function safeURL(v) {
   v = String(v);
-  if (/^\/[0-9A-Za-z.:]*$/.test(v)) return v;
+  if (/^\/[0-9A-Za-z.:/-]*$/.test(v)) return v;
   try { const u = new URL(v); return u.protocol === 'http:' || u.protocol === 'https:' ? u.href : null; } catch { return null; }
 }
 const ext = (href, text = href) => safeURL(href) ? h('a', {href, target: '_blank', rel: 'noopener noreferrer'}, text) : text;
@@ -78,6 +77,16 @@ const fmtPct = v => {
   const r = Math.round(n * 10) / 10;
   return (Number.isInteger(r) ? String(r) : r.toFixed(1)) + '%';
 };
+function fmtCPE(raw) {
+  const s = String(raw || '').trim();
+  const parts = s.startsWith('cpe:2.3:') ? s.slice(8).split(':') : s.startsWith('cpe:/') ? s.slice(5).split(':') : [];
+  if (parts.length >= 3) {
+    const prod = parts[2]?.replace(/_/g, ' ') || '';
+    const ver = parts[3] && parts[3] !== '*' && parts[3] !== '-' ? ' ' + parts[3] : '';
+    if (prod) return prod + ver;
+  }
+  return s;
+}
 
 function scoreTier(v, explicitTone, explicitLevel) {
   const n = clamp(v);
@@ -125,6 +134,15 @@ const kv = rows => {
   return rows.length ? h('dl', {class: 'kv'}, rows.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])) : null;
 };
 const card = (title, ...kids) => h('section', {class: 'card'}, h('h2', null, title), kids);
+const richCard = (id, title, sub, action, ...kids) => h('section', {id: id || null, class: 'card'},
+  h('div', {class: 'card-head'},
+    h('div', {class: 'card-title-group'}, h('h2', null, title), sub ? h('p', {class: 'card-sub'}, sub) : null),
+    action),
+  kids);
+const statTile = (k, v, sub = '', vCls = '') => h('div', {class: 'stat-tile'},
+  h('span', {class: 'st-k'}, k),
+  h('b', {class: 'st-v' + (vCls ? ' ' + vCls : '')}, v),
+  sub ? h('span', {class: 'st-sub'}, sub) : null);
 const empty = text => h('p', {class: 'empty'}, text);
 const spinner = () => h('span', {class: 'spin', 'aria-hidden': 'true'});
 
@@ -168,7 +186,7 @@ const ipHead = r => h('div', {class: 'v-ip'},
   h('button', {id: 'copy', type: 'button', class: 'btn sm', disabled: !normIP(r.ip), 'aria-label': '复制 IP 地址', onclick: e => copy(r.ip, e.currentTarget)}, '复制'),
   r.version ? tag('IPv' + r.version) : null);
 
-// Tier 1: Top Summary Card (Identity + Purity Score Ring)
+// Band 1: Top Summary Dossier (#result)
 function verdictCard(r, pending, failed = false) {
   const v = r.verdict || {}, conf = CONF[v.confidence], borderColor = VERDICT_BORDER_VAR[v.type], n = r.network || {};
   const typeTone = TYPE_TONE[v.type] || 'neutral';
@@ -243,7 +261,30 @@ function nativeLine(n) {
     n.status === 'unknown' && n.detail ? h('span', {class: 'mut'}, n.detail) : null);
 }
 
-// Tier 2: Symmetrical 2-Column Insight Row (Left: Traffic & Scenarios, Right: Risk & Security Checks)
+// Band 2: Left (Human-vs-Bot Traffic Profile) + Right (4-Scenario Suitability Cards)
+function resolveTrafficModel(r, pending) {
+  const tr = r.traffic || {};
+  if (tr.mode === 'radar' || tr.mode === 'estimated') return tr;
+  if (pending || r.bogon || r.mode !== 'full' || r.score?.data_status === 'unavailable') return null;
+  const v = r.verdict || {}, f = r.flags || {};
+  const baseBot = {residential: 8, mobile: 6, education: 15, government: 14, business: 18, cdn: 46, hosting: 66}[v.type] ?? 22;
+  const extra = (f.is_crawler ? 40 : 0) + (f.is_tor ? 24 : f.is_proxy || f.is_vpn ? 16 : 0) + (f.is_abuser ? 18 : 0);
+  const botPct = Math.min(96, Math.max(4, baseBot + extra));
+  const humanPct = 100 - botPct;
+  const tier = trafficTier(humanPct);
+  return {
+    mode: 'baseline',
+    source: '网络类型基线推算',
+    human_pct: humanPct,
+    bot_pct: botPct,
+    level: tier.level,
+    tone: tier.tone,
+    note: '基于自治系统用途属性与公开风险特征生成的基线分布参考',
+    bot_signals: tr.bot_signals || [],
+    request_probe: tr.request_probe || null,
+  };
+}
+
 function buildFallbackScenarios(r) {
   if (Array.isArray(r.audit?.scenarios) && r.audit.scenarios.length) return r.audit.scenarios;
   if (r.mode !== 'full' || r.score?.data_status === 'unavailable' || r.bogon) return [];
@@ -252,159 +293,245 @@ function buildFallbackScenarios(r) {
   const mk = (id, name, raw, detail) => {
     const s = Math.max(1, Math.min(10, raw));
     const tone = s >= 8 ? 'good' : s >= 6 ? 'warn' : s >= 4 ? 'poor' : 'bad';
-    const status = s >= 8 ? '优质可用' : s >= 6 ? (id === 'ai' ? '可以尝试' : '可用') : s >= 4 ? '易受限' : '高风控';
+    const status = s >= 8 ? '优质可用' : s >= 6 ? (id === 'ai' ? '可以尝试' : '可用') : s >= 4 ? '易受限' : '高风控 / 受限';
     return {id, name, score: s, max: 10, status, tone, detail};
   };
   const penalty = (f.is_tor ? 5 : f.is_proxy || f.is_vpn ? 3 : 0) + (f.is_abuser ? 3 : 0) + (isBroad ? 1 : 0);
   return [
-    mk('tiktok', 'TikTok', (isHost ? 6 : 9) - penalty, '基于网络属性、原生性与信誉信号评估'),
-    mk('social', '社媒运营', (isHost ? 6 : 9) - penalty, '基于住宅/机房属性与垃圾滥用记录评估'),
-    mk('ai', 'AI 应用', (isHost ? 7 : 9) - penalty, '基于定位地区、机房标记与风控信号评估'),
-    mk('shield', '免盾浏览', (isHost ? 7 : 9) - penalty, '基于黑名单命中与人机流量倾向评估'),
+    mk('tiktok', 'TikTok', (isHost ? 6 : 9) - penalty, isHost ? '机房/CDN 网段可正常连接，但自然推荐权重低于本地原生住宅宽带' : '原生终端接入网络，适合内容浏览与分区定位'),
+    mk('social', '社媒运营', (isHost ? 6 : 9) - penalty, isHost ? '常规浏览可用，新注册或高频操作更容易触发二次验证' : '网络属性与信誉良好，适合常规社媒账号登录维护'),
+    mk('ai', 'AI 应用', (isHost ? 7 : 9) - penalty, isHost ? '原生云/边缘网段通常可访问，严格平台偶发人机质询' : '定位地区与信誉满足主流大模型平台要求'),
+    mk('shield', '免盾浏览', (isHost ? 7 : 9) - penalty, isHost ? '数据中心 ASN 初始人机信任分略低于普通家庭宽带' : '未见黑名单与异常扫描特征，日常访问较少弹盾'),
   ];
 }
 
-function insightRow(r, pending) {
-  const tr = r.traffic || {}, f = r.flags || {}, a = r.audit || {}, n = r.network || {};
-  const act = a.activity || {};
-  const hasRatio = tr.mode === 'radar' || tr.mode === 'estimated';
+function trafficAndScenarioRow(r, pending) {
+  const tm = resolveTrafficModel(r, pending);
+  const reqProbe = r.traffic?.request_probe || tm?.request_probe;
+  const flow = r.audit?.flow;
 
-  // Left Card: Human/Bot Traffic Ratio + 2x2 Scenarios
-  let trafficBlock;
-  if (hasRatio) {
-    const hp = clamp(tr.human_pct), bp = clamp(tr.bot_pct);
-    const tier = trafficTier(hp, tr.tone, tr.level);
-    const srcText = tr.mode === 'radar' ? `Cloudflare Radar · 近 ${tr.window || '7d'} 实测` : '多源行为与网段特征推算';
-    const hasDev = typeof tr.desktop_pct === 'number' && typeof tr.mobile_pct === 'number';
-    const sigs = Array.isArray(tr.bot_signals) ? tr.bot_signals.slice(0, 3) : [];
-    trafficBlock = h('div', {class: 'hb-block'},
-      h('div', {class: 'hb-top'},
-        pill(tier.level, tier.tone),
-        h('span', {class: 'hb-src'}, srcText)),
-      h('div', {class: 'hb-bar', role: 'img', 'aria-label': `人类 ${fmtPct(hp)}，机器 ${fmtPct(bp)}`},
-        hp > 0 ? h('span', {class: 'seg-h', style: {width: hp + '%'}}) : null,
-        bp > 0 ? h('span', {class: 'seg-b', style: {width: bp + '%'}}) : null),
-      h('div', {class: 'hb-foot mono'},
-        h('span', {class: 'h-txt'}, '人类 ' + fmtPct(hp)),
-        h('span', {class: 'b-txt'}, '机器 ' + fmtPct(bp))),
-      hasDev ? h('div', {class: 'hb-dev'},
-        h('div', {class: 'hb-bar dev', role: 'img', 'aria-label': `桌面端 ${fmtPct(tr.desktop_pct)}，移动端 ${fmtPct(tr.mobile_pct)}`},
-          h('span', {class: 'seg-h', style: {width: clamp(tr.desktop_pct) + '%'}}),
-          h('span', {class: 'seg-b', style: {width: clamp(tr.mobile_pct) + '%'}})),
-        h('div', {class: 'hb-dev-row mono'},
-          h('span', null, '桌面端 ' + fmtPct(tr.desktop_pct)),
-          h('span', null, '移动端 ' + fmtPct(tr.mobile_pct)))) : null,
-      sigs.length ? h('ul', {class: 'hb-signals'}, sigs.map(s => h('li', null, s))) : null);
+  let trafficBody;
+  if (tm) {
+    const hp = clamp(tm.human_pct), bp = clamp(tm.bot_pct);
+    const tier = trafficTier(hp, tm.tone, tm.level);
+    const srcLabel = tm.mode === 'radar'
+      ? `Cloudflare Radar · 近 ${tm.window || '7d'} 自治系统实测`
+      : (tm.source || '多源行为与网络特征推算');
+    const hasDev = typeof tm.desktop_pct === 'number' && typeof tm.mobile_pct === 'number';
+    const sigs = Array.isArray(tm.bot_signals) ? tm.bot_signals : [];
+
+    let visitorRow = null;
+    if (reqProbe) {
+      const env = inspectBrowserClient();
+      const autoPct = clamp(Math.round(reqProbe.automation_share * 0.65 + env.autoPts * 0.35));
+      const humanShare = 100 - autoPct;
+      visitorRow = autoPct >= 45
+        ? pill(`脚本/自动化倾向 ${autoPct}% · ${reqProbe.client_family || '客户端'}`, 'warn')
+        : dot(`真人交互特征 ${humanShare}% · ${reqProbe.client_family || '标准浏览器'}${reqProbe.proto ? ' (' + reqProbe.proto + ')' : ''}`, 'ok');
+    }
+
+    trafficBody = [
+      h('div', {class: 'stat-strip two'},
+        statTile('人类自然流量', '人类 ' + fmtPct(hp), '真人终端交互请求占比', 'human mono'),
+        statTile('机器与自动化流量', '机器 ' + fmtPct(bp), '爬虫、扫描与脚本请求占比', 'bot mono')),
+      h('div', {class: 'hb-panel'},
+        h('div', {class: 'hb-bar-head'}, h('span', null, '流量构成分布'), h('span', null, srcLabel)),
+        h('div', {class: 'hb-bar', role: 'img', 'aria-label': `人类 ${fmtPct(hp)}，机器 ${fmtPct(bp)}`},
+          hp > 0 ? h('span', {class: 'seg-h', style: {width: hp + '%'}}) : null,
+          bp > 0 ? h('span', {class: 'seg-b', style: {width: bp + '%'}}) : null),
+        hasDev ? h('div', {class: 'hb-dev'},
+          h('div', {class: 'hb-bar dev', role: 'img', 'aria-label': `桌面端 ${fmtPct(tm.desktop_pct)}，移动端 ${fmtPct(tm.mobile_pct)}`},
+            h('span', {class: 'seg-h', style: {width: clamp(tm.desktop_pct) + '%'}}),
+            h('span', {class: 'seg-b', style: {width: clamp(tm.mobile_pct) + '%'}})),
+          h('div', {class: 'hb-dev-row mono'},
+            h('span', null, '桌面端 ' + fmtPct(tm.desktop_pct)),
+            h('span', null, '移动端 ' + fmtPct(tm.mobile_pct)))) : null,
+        sigs.length ? h('ul', {class: 'hb-signals'}, sigs.map(s => h('li', null, s))) : null,
+        tm.note ? h('p', {class: 'hb-note'}, tm.note) : null),
+      kv([
+        ['流量方向', flow?.ratio_label || flow?.traffic_ratio],
+        ['当前访客握手', visitorRow],
+      ]),
+    ];
   } else {
-    trafficBlock = h('div', {class: 'hb-block'},
-      empty(pending ? '正在计算人机流量比例分布…' : (tr.note || '当前缺少足够的自治系统与信誉数据，暂无法估算人机比例')));
+    trafficBody = [
+      h('div', {class: 'hb-panel'},
+        empty(pending ? '正在结合自治系统与在线信誉源计算人机流量比例…' : (r.traffic?.note || '当前缺少足够的在线信誉数据，暂不估算人机流量比例'))),
+    ];
   }
 
+  const tierBadge = tm ? pill(trafficTier(tm.human_pct, tm.tone, tm.level).level, trafficTier(tm.human_pct, tm.tone, tm.level).tone) : null;
+  const leftCard = richCard(
+    'trafficCard',
+    '人机流量与终端分布',
+    '评估自治系统真人浏览与自动化脚本/爬虫流量占比',
+    tierBadge,
+    trafficBody
+  );
+
   const scenarios = buildFallbackScenarios(r);
-  const scenarioSection = scenarios.length ? [
-    h('h3', null, '场景可用性参考'),
-    h('div', {class: 'scenario-grid'}, scenarios.map(sc =>
-      h('div', {class: 'sc-item', title: sc.detail || ''},
-        h('div', {class: 'sc-gauge', 'data-tone': sc.tone, style: {'--pts': sc.score}}, String(sc.score)),
-        h('div', {class: 'sc-meta'},
-          h('b', null, sc.name),
-          h('span', {class: 'tone-' + sc.tone}, sc.status))))),
-  ] : (pending ? [h('h3', null, '场景可用性参考'), empty('等待完整检测结果…')] : null);
+  const scenarioNames = {
+    tiktok: 'TikTok · 短视频分发',
+    social: '社媒运营 · 账号登录维护',
+    ai: 'AI 应用 · 主流大模型访问',
+    shield: '免盾浏览 · 验证码与邮局信誉',
+  };
+  const rightBody = scenarios.length ? h('div', {class: 'scenario-stack'}, scenarios.map(sc => {
+    const pts = Math.max(0, Math.min(10, Number(sc.score) || 0));
+    const segs = Array.from({length: 10}, (_, i) => h('i', {class: i < pts ? 'on' : null}));
+    return h('div', {class: 'sc-row-card'},
+      h('div', {class: 'sc-row-top'},
+        h('div', {class: 'sc-name-wrap'},
+          h('b', null, scenarioNames[sc.id] || sc.name),
+          pill(sc.status, sc.tone)),
+        h('span', {class: 'sc-pts'}, `${pts} / ${sc.max || 10}`)),
+      h('div', {class: 'sc-seg-bar', 'data-tone': sc.tone, role: 'img', 'aria-label': `${sc.name} ${pts}/10`}, segs),
+      sc.detail ? h('p', {class: 'sc-desc'}, sc.detail) : null);
+  })) : h('div', {class: 'hb-panel'},
+    empty(pending ? '正在根据原生性、网络类型与信誉信号生成各业务场景评估…' : '信誉数据不足，暂无法生成场景可用性参考'));
 
-  const leftCard = h('section', {id: 'trafficCard', class: 'card'},
-    h('div', {class: 'card-head'}, h('h2', null, '人机流量与场景参考')),
-    trafficBlock,
-    scenarioSection);
+  const rightCard = richCard(
+    'scenarioCard',
+    '业务场景可用性参考',
+    '结合原生地区、机房/家宽属性与风控记录评估常见场景表现',
+    null,
+    rightBody
+  );
 
-  // Right Card: Quiet-Baseline Risk & Security Verification
+  return h('div', {id: 'insightGrid', class: 'grid2'}, leftCard, rightCard);
+}
+
+// Band 3: Left (Anonymizer, Lease & Masquerade Audit) + Right (/24 Neighbor Density, Threat Telemetry & Port Exposure)
+function riskAndSubnetRow(r, pending) {
+  const f = r.flags || {}, a = r.audit || {}, act = a.activity || {};
   const torHit = Boolean(f.is_tor || act.tor_exit || act.tor_relay);
   const leaseHit = Boolean(f.is_leased || a.lease?.leased);
   const masqHit = Boolean(a.flow?.masquerade);
 
+  const riskSummary = a.risk_summary || (pending ? '评估中…' : (f.is_tor || f.is_abuser ? '发现明显威胁标记' : f.is_proxy || f.is_vpn || leaseHit ? '存在代理或租赁特征' : '未发现明显威胁'));
+  const riskTone = a.risk_tone || (f.is_tor || f.is_abuser ? 'bad' : f.is_proxy || f.is_vpn || leaseHit ? 'warn' : 'good');
+  const abuseLevel = a.abuse_level || (pending ? '评估中…' : (f.is_abuser ? '高风险' : '纯净'));
+  const abuseTone = a.abuse_tone || (f.is_abuser ? 'bad' : 'good');
+  const honeyStatus = a.honeypot_status || (pending ? '评估中…' : '纯净');
+  const honeyTone = a.honeypot_tone || 'good';
+
+  const trio = h('div', {class: 'audit-trio'},
+    h('div', {class: 'trio-box'}, h('span', null, '威胁综述'), h('b', {class: pending ? 'mut' : 'tone-' + riskTone}, riskSummary)),
+    h('div', {class: 'trio-box'}, h('span', null, '滥用评级'), h('b', {class: pending ? 'mut' : 'tone-' + abuseTone}, abuseLevel)),
+    h('div', {class: 'trio-box'}, h('span', null, '蜜罐黑名单'), h('b', {class: pending ? 'mut' : 'tone-' + honeyTone}, honeyStatus)));
+
   const checkCell = (name, hit, hitText, severity = 'bad', tip = '') => {
-    if (pending) {
-      return h('div', {class: 'check-cell'}, h('span', {class: 'check-name'}, name), h('span', {class: 'mut'}, '…'));
-    }
+    if (pending) return h('div', {class: 'check-cell'}, h('span', {class: 'check-name'}, name), h('span', {class: 'mut'}, '…'));
     return h('div', {class: hit ? 'check-cell hit-' + severity : 'check-cell', title: tip || null},
       h('span', {class: 'check-name'}, name),
       hit ? dot(hitText, severity) : dot('未检测到', 'ok'));
   };
 
   const checkGrid = h('div', {class: 'check-grid'},
-    checkCell('VPN', Boolean(f.is_vpn), '检测到', 'bad'),
+    checkCell('VPN 隧道', Boolean(f.is_vpn), '检测到', 'bad'),
     checkCell('代理 (Proxy)', Boolean(f.is_proxy), '检测到', 'bad'),
-    checkCell('Tor 节点', torHit, f.is_tor || act.tor_exit ? '出口节点' : '中继节点', 'bad'),
+    checkCell('Tor 匿名节点', torHit, f.is_tor || act.tor_exit ? '出口节点' : '中继节点', 'bad'),
     checkCell('爬虫 / 机器人', Boolean(f.is_crawler), '检测到', 'warn'),
-    checkCell('商业地址租赁', leaseHit, a.lease?.broker || '租赁段', 'warn', a.lease?.detail || ''),
+    checkCell('商业地址租赁', leaseHit, a.lease?.broker || '租赁网段', 'warn', a.lease?.detail || ''),
     checkCell('家宽流量核验', masqHit, '疑似伪家宽', 'bad', a.flow?.detail || ''));
+
+  const specialFlags = [
+    f.is_anycast ? tag('Anycast 任播节点', 195) : null,
+    f.is_icloud_relay ? tag('iCloud 专用代理', 210) : null,
+    f.is_satellite ? tag('卫星通信网段', 225) : null,
+    f.is_public_service ? tag('公共基础设施', 180) : null,
+  ].filter(Boolean);
+
+  const leaseDetail = a.lease?.detail || (pending ? '正在核验商业 IP 租赁经纪商名录…' : '未命中已知商业 IP 租赁经纪商（IPXO / InterLIR / Cloud Innovation 等）');
+  const flowDetail = a.flow?.detail || (pending ? '正在交叉比对自治系统流量方向…' : '未发现出向型服务器流量冒充家庭宽带的异常特征');
+
+  const auditNotes = h('div', {class: 'audit-notes'},
+    h('div', {class: 'audit-note-item'},
+      h('span', {class: 'an-k'}, '商业租赁核验', leaseHit ? pill(a.lease?.broker || '命中租赁', 'warn') : null),
+      h('span', {class: 'an-v'}, leaseDetail)),
+    h('div', {class: 'audit-note-item'},
+      h('span', {class: 'an-k'}, '流量方向交叉核验', masqHit ? pill('疑似伪家宽', 'bad') : null),
+      h('span', {class: 'an-v'}, flowDetail)),
+    specialFlags.length ? h('div', {class: 'tags'}, specialFlags) : null);
+
+  const leftCard = richCard(
+    'securityCard',
+    '风险与技术核验',
+    '识别匿名代理隧道、商业租赁重宣告网段与伪家宽特征',
+    null,
+    trio,
+    checkGrid,
+    auditNotes
+  );
+
+  // Right Card: /24 (/48) Neighbor Contamination + Threat Telemetry + Shodan Port Exposure
+  const nb = a.neighbor;
+  const totalCells = 32;
+  let dirtyCells = 0, dirtyCls = 'dirty-warn';
+  if (nb && nb.flagged > 0) {
+    const ratio = nb.total ? nb.flagged / nb.total : Math.min(1, nb.flagged / 32);
+    dirtyCells = Math.max(1, Math.round(ratio * totalCells));
+    if (nb.level === '高危脏段' || ratio >= 0.12) dirtyCls = 'dirty-bad';
+  }
+  const nbTone = !nb ? 'neutral' : nb.flagged === 0 ? 'good' : nb.level === '高危脏段' ? 'bad' : 'warn';
+  const nbRightLabel = !nb ? (pending ? '扫描中…' : '离线库未加载')
+    : nb.total ? `${nb.flagged} / ${nb.total} 命中` + (nb.density_pct ? ` (${fmtPct(nb.density_pct)})` : '')
+    : `${nb.flagged} 个子块命中`;
+
+  const subnetBox = h('div', {class: 'subnet-box'},
+    h('div', {class: 'subnet-head'},
+      h('div', {class: 'tags'},
+        h('b', null, '同段邻居健康度'),
+        nb?.prefix ? mono(nb.prefix) : null),
+      nb ? pill(nb.level || (nb.flagged === 0 ? '纯净网段' : '存在连带'), nbTone) : h('span', {class: 'mut'}, nbRightLabel)),
+    h('div', {class: nb ? 'subnet-grid' : 'subnet-grid pending', role: 'img', 'aria-label': '同段风险邻居密度示意'},
+      Array.from({length: totalCells}, (_, i) => h('i', {class: i < dirtyCells ? dirtyCls : null}))),
+    h('div', {class: 'subnet-foot'},
+      h('span', null, nb ? nbRightLabel : '按同 /24 (IPv4) 或 /48 (IPv6) 统计风险邻居密度'),
+      nb?.lists_loaded ? h('span', null, `已比对 ${nb.lists_loaded} 个离线情报集`) : null),
+    nb?.categories?.length ? h('div', {class: 'tags', style: {'margin-top': '6px'}}, nb.categories.map(c => tag('邻居命中：' + c))) : null);
 
   const dnsblTotal = (r.dnsbl || []).length;
   const dnsblHits = (r.dnsbl || []).filter(d => d.listed).length;
-  const threatParts = [];
-  if (dnsblHits > 0) threatParts.push(`DNSBL ${dnsblHits}/${dnsblTotal}`);
-  if (act.spam_reports > 0) threatParts.push(`垃圾注册 ${act.spam_reports} 次`);
-  if (act.dshield_packets > 0) threatParts.push(`DShield ${act.dshield_packets} 包`);
-  if (act.otx_pulses > 0) threatParts.push(`OTX ${act.otx_pulses} 脉冲`);
-
-  const blacklistVal = pending ? h('span', {class: 'mut'}, '检测中…')
-    : threatParts.length ? pill(threatParts.join(' · '), dnsblHits >= 2 || act.spam_reports >= 5 ? 'bad' : 'warn')
-    : dot(dnsblTotal > 0 ? `纯净（0/${dnsblTotal} DNSBL）` : '纯净（未见威胁记录）', 'ok');
-
-  const nb = a.neighbor;
-  const nbVal = !nb ? h('span', {class: 'mut'}, '离线库未就绪')
-    : nb.flagged === 0 ? dot(`纯净网段（${nb.prefix}）`, 'ok')
-    : pill(`${nb.level} · ${nb.total ? nb.flagged + '/' + nb.total : nb.flagged + ' 块'}`,
-      nb.level === '高危脏段' ? 'bad' : 'warn', nb.prefix);
-
-  const rpkiRaw = String(n.rpki || '');
-  const rpkiVal = !rpkiRaw ? (r.mode === 'full' ? h('span', {class: 'mut'}, '未知') : h('span', {class: 'mut'}, '待查询'))
-    : rpkiRaw === '有效' || (/valid/i.test(rpkiRaw) && !/invalid/i.test(rpkiRaw)) ? dot('Valid（有效）', 'ok')
-    : /无效|invalid/i.test(rpkiRaw) ? pill('Invalid（' + rpkiRaw + '）', 'bad')
-    : dot(rpkiRaw, 'info');
+  const telemetry = h('div', {class: 'stat-strip four'},
+    statTile('DNSBL 联防', pending ? '…' : `${dnsblHits} / ${dnsblTotal}`, dnsblHits > 0 ? '存在黑名单记录' : '实时黑名单核验', dnsblHits > 0 ? 'bot mono' : 'mono'),
+    statTile('垃圾表单记录', pending ? '…' : `${act.spam_reports || 0} 次`, act.spam_last_seen ? '最近 ' + act.spam_last_seen : 'StopForumSpam', act.spam_reports > 0 ? 'bot mono' : 'mono'),
+    statTile('蜜罐捕获包', pending ? '…' : `${act.dshield_packets || 0} 包`, act.dshield_targets ? `涉及 ${act.dshield_targets} 目标` : 'DShield 扫描库', act.dshield_packets > 0 ? 'bot mono' : 'mono'),
+    statTile('威胁情报脉冲', pending ? '…' : `${act.otx_pulses || 0} 条`, act.tor_neighbors ? `同段 Tor ${act.tor_neighbors}` : 'AlienVault OTX', act.otx_pulses > 0 ? 'bot mono' : 'mono'));
 
   const openPorts = r.ports?.ports || [];
-  const portVal = openPorts.length
-    ? [mono(openPorts.slice(0, 6).join(', ') + (openPorts.length > 6 ? ` 等 ${openPorts.length} 个` : '')),
-      r.ports?.vulns?.length ? pill(`漏洞 ${r.ports.vulns.length}`, 'bad') : null]
-    : (r.mode === 'full' ? dot('未见公开暴露端口', 'ok') : null);
-
-  // Compact live visitor probe summary when server attached request_probe (self IP)
-  let reqSummary = null;
-  if (tr.request_probe) {
-    const clientEnv = inspectBrowserClient();
-    const combinedAuto = clamp(Math.round(tr.request_probe.automation_share * 0.65 + clientEnv.autoPts * 0.35));
-    const combinedHuman = 100 - combinedAuto;
-    reqSummary = combinedAuto >= 45
-      ? pill(`自动化倾向 ${combinedAuto}%（${tr.request_probe.client_family || '客户端'}）`, 'warn')
-      : dot(`真人终端特征 ${combinedHuman}%（${tr.request_probe.client_family || '浏览器'}）`, 'ok');
-  }
-
+  const cpes = (r.ports?.cpes || []).map(fmtCPE).filter(Boolean);
+  const vulns = r.ports?.vulns || [];
+  const portTags = r.ports?.tags || [];
+  const listHits = (r.lists || []).map(l => l.label).filter(Boolean);
   const cleanRow = (k, v) => has(v) ? h('div', {class: 'clean-row'}, h('span', {class: 'clean-k'}, k), h('div', {class: 'clean-v'}, v)) : null;
 
-  const rightCard = h('section', {id: 'securityCard', class: 'card'},
-    h('div', {class: 'card-head'},
-      h('h2', null, '风险与技术核验'),
-      h('button', {
-        id: 'deepProbeBtn',
-        type: 'button',
-        class: 'btn probe-trigger',
-        disabled: pending,
-        'aria-haspopup': 'dialog',
-        'aria-controls': 'probeDetails',
-        onclick: e => openProbeDialog(e.currentTarget),
-      }, '连接与 443 实测')),
-    checkGrid,
-    h('div', {class: 'clean-rows'},
-      cleanRow('蜜罐 / 黑名单', blacklistVal),
-      cleanRow('同段邻居 (/24)', nbVal),
-      cleanRow('RPKI 路由签名', rpkiVal),
-      cleanRow('公开暴露端口', portVal),
-      cleanRow('当前访客特征', reqSummary)));
+  const exposureBox = h('div', {class: 'exposure-box'},
+    cleanRow('公开暴露端口', openPorts.length
+      ? openPorts.slice(0, 14).map(p => tag(String(p)))
+      : (pending ? h('span', {class: 'mut'}, '正在查询暴露端口…') : dot('未见常见公开暴露端口', 'ok'))),
+    cleanRow('服务组件指纹', cpes.length ? cpes.slice(0, 6).map(c => tag(c)) : null),
+    cleanRow('协议与主机标签', portTags.length ? portTags.map(t => tag(t, 195)) : null),
+    cleanRow('关联漏洞编号', vulns.length ? [
+      pill(`关联 ${vulns.length} 项 CVE`, 'bad'),
+      ...vulns.slice(0, 4).map(v => mono(v)),
+    ] : null),
+    cleanRow('离线名单命中', listHits.length ? listHits.slice(0, 6).map(x => pill(x, 'warn')) : null));
 
-  return h('div', {id: 'insightGrid', class: 'grid2'}, leftCard, rightCard);
+  const rightCard = richCard(
+    'subnetCard',
+    '网段连带与暴露面审计',
+    '核查同子网邻居连带污染、多源蜜罐遥测与公网开放端口',
+    null,
+    subnetBox,
+    telemetry,
+    exposureBox
+  );
+
+  return h('div', {id: 'auditGrid', class: 'grid2'}, leftCard, rightCard);
 }
 
-// Score Details Modal
+// Score Details Modal (#scoreDetails)
 const SOURCE_STATUS = {ok: '已返回', empty: '无记录', error: '查询失败', timeout: '超时', quota: '配额不足', skipped: '未执行'};
 function clearScoreDetails() {
   scoreDetailsOpener = null;
@@ -464,16 +591,133 @@ function showScoreDetails(r, opener) {
 $('#scoreDetailsClose').addEventListener('click', () => scoreDialog.close());
 scoreDialog.addEventListener('close', () => { if (scoreDetailsOpener?.isConnected) scoreDetailsOpener.focus(); });
 
-// Active Probe & Visitor Human/Bot Inspection Modal (#probeDetails)
+// Band 4: Geography + Map (Left) & Consolidated Network / ASN Profile (Right)
+function geoCard(g) {
+  const lat = Number(g.lat) || 0, lon = Number(g.lon) || 0;
+  const geoTiles = [
+    g.continent ? statTile('所属大洲', g.continent, g.continent_code || '地理分区') : null,
+    g.time_zone ? statTile('标准时区', g.time_zone, g.utc_offset ? 'UTC ' + g.utc_offset : '区域时间', 'mono') : null,
+    (g.currency || g.calling_code) ? statTile('货币与区号', [g.currency, g.calling_code].filter(Boolean).join(' · '), g.is_eu ? '欧盟成员地区' : '国际通信参数', 'mono') : null,
+  ].filter(Boolean);
+  const topTiles = geoTiles.length >= 2 ? h('div', {class: geoTiles.length === 2 ? 'stat-strip two' : 'stat-strip'}, geoTiles) : null;
+
+  const list = kv([
+    ['所属大洲', !topTiles && bi(g.continent, '', g.continent_code)],
+    ['国家', has([g.country, g.country_en, g.country_code]) && `${g.flag || flag(g.country_code)} ${bi(g.country, g.country_en, g.country_code)}`.trim()],
+    ['地区 / 省州', bi(g.region, g.region_en, g.region_code)],
+    ['城市', bi(g.city, g.city_en)],
+    ['区县', g.district],
+    ['邮政编码', mono(g.postal)],
+    ['经纬度坐标', (lat || lon) && ext(`https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=10/${lat}/${lon}`, `${lat}, ${lon}`)],
+    ['定位精度半径', g.accuracy_km && `约 ${g.accuracy_km} km`],
+    ['时区', !topTiles && [g.time_zone, g.utc_offset && 'UTC ' + g.utc_offset].filter(Boolean).join(' · ')],
+    ['欧盟成员', !topTiles && g.is_eu && '是'],
+  ]);
+  return card('地理位置', topTiles, list || empty('没有地理信息'));
+}
+
+let mapView = null, leaflet = null;
+function mapCard(g) {
+  const lat = Number(g.lat), lon = Number(g.lon), acc = Number(g.accuracy_km) || 0, key = [lat, lon, acc].join();
+  if (!(Math.abs(lat) <= 90 && Math.abs(lon) <= 180) || !lat && !lon) return dropMap();
+  if (mapView?.key !== key) {
+    dropMap();
+    const box = h('div', {class: 'map'});
+    mapView = {key, lat, lon, acc, box, el: h('section', {class: 'card mapcard'},
+      h('h2', null, '位置地图', acc ? h('small', null, `圆圈为约 ${acc} km 的定位精度`) : null), box)};
+  }
+  return mapView.el;
+}
+function dropMap() { mapView?.map?.remove(); mapView = null; return null; }
+
+function loadLeaflet() {
+  const load = (tag, props) => new Promise((resolve, reject) => document.head.append(Object.assign(document.createElement(tag), props,
+    {onload: resolve, onerror: () => reject(new Error('无法下载地图组件'))})));
+  return leaflet ||= Promise.all([load('link', {rel: 'stylesheet', href: '/static/vendor/leaflet/leaflet.css?v=1.9.4'}),
+    load('script', {src: '/static/vendor/leaflet/leaflet.js?v=1.9.4'})])
+    .then(() => window.L || Promise.reject(new Error('地图组件无效')), e => { leaflet = null; throw e; });
+}
+async function mountMap() {
+  const v = mapView;
+  if (!v?.el.isConnected || v.loading) return;
+  if (v.map) return void v.map.invalidateSize();
+  v.loading = true;
+  try {
+    const L = await loadLeaflet();
+    if (v !== mapView || !v.el.isConnected) return;
+    const at = [v.lat, v.lon], color = getComputedStyle(v.box).getPropertyValue('--acc').trim() || '#0b6b88';
+    v.box.replaceChildren();
+    const m = v.map = L.map(v.box, {scrollWheelZoom: false, dragging: !L.Browser.mobile});
+    if (v.acc) {
+      m.fitBounds(L.latLng(at).toBounds(v.acc * 2000), {maxZoom: 12, padding: [16, 16]});
+      L.circle(at, {radius: v.acc * 1000, color, weight: 1, fillOpacity: .1}).addTo(m);
+    } else m.setView(at, 10);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19, referrerPolicy: 'strict-origin-when-cross-origin',
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors'}).addTo(m);
+    L.circleMarker(at, {radius: 6, color, weight: 2, fillColor: color, fillOpacity: .9}).addTo(m);
+  } catch (e) {
+    v.box.replaceChildren(empty('地图加载失败：' + e.message));
+  } finally { v.loading = false; }
+}
+
+function netCard(n) {
+  const p = n.peeringdb || {};
+  const v4Total = fmtInt(n.as_ipv4_count);
+  const hasPfx = Boolean(n.as_prefixes_v4 || n.as_prefixes_v6);
+  const netTiles = [
+    v4Total ? statTile('ASN IPv4 地址总量', v4Total, '宣告前缀并集去重规模', 'mono') : null,
+    p.info_traffic ? statTile('预估骨干带宽', p.info_traffic, [p.info_scope, p.info_ratio].filter(Boolean).join(' · ') || 'PeeringDB 申报', 'mono') : null,
+    (p.ix_count || p.fac_count)
+      ? statTile('互联交换设施', `IX ${p.ix_count || 0} · 机房 ${p.fac_count || 0}`, p.policy ? '互联策略 ' + p.policy : 'BGP 互联节点', 'mono')
+      : hasPfx ? statTile('宣告路由前缀', `v4 ${n.as_prefixes_v4 || 0} · v6 ${n.as_prefixes_v6 || 0}`, '全局路由表活跃前缀数', 'mono') : null,
+  ].filter(Boolean);
+  const scaleStrip = netTiles.length >= 2 ? h('div', {class: netTiles.length === 2 ? 'stat-strip two' : 'stat-strip'}, netTiles) : null;
+
+  const rpkiRaw = String(n.rpki || '');
+  const rpkiNode = !rpkiRaw ? null
+    : rpkiRaw === '有效' || (/valid/i.test(rpkiRaw) && !/invalid/i.test(rpkiRaw)) ? dot('Valid（路由源验证有效）', 'ok')
+    : /无效|invalid/i.test(rpkiRaw) ? pill('Invalid（' + rpkiRaw + '）', 'bad')
+    : dot(rpkiRaw, 'info');
+
+  const entity = n.registrant && n.registrant !== n.org ? `${n.registrant}${n.org ? ' / ' + n.org : ''}` : (n.org || n.registrant);
+
+  const list = kv([
+    ['ASN', n.asn && h('div', {class: 'tags'},
+      ext('https://bgp.tools/as/' + n.asn, mono('AS' + n.asn)),
+      ext('https://www.peeringdb.com/asn/' + n.asn, 'PeeringDB'),
+      h('button', {type: 'button', class: 'btn sm', onclick: e => copy('AS' + n.asn, e.currentTarget, '复制 ASN')}, '复制 ASN'))],
+    ['AS 名称', n.as_name],
+    ['AS 自报类型', n.as_type_label || p.info_type || n.as_class],
+    ['AS 注册日期', mono(n.as_created)],
+    ['企业 / 主体', entity],
+    ['运营服务商', n.isp && n.isp !== n.as_name ? n.isp : null],
+    ['BGP 路由前缀', mono(n.bgp_prefix || n.prefix)],
+    ['所属注册网段', n.prefix && n.bgp_prefix && n.prefix !== n.bgp_prefix ? mono(n.prefix) : null],
+    ['网络名称', mono(n.net_name)],
+    ['注册局与分配', [n.registry && n.registry.toUpperCase(), n.allocated].filter(Boolean).join(' · ')],
+    ['RPKI 路由签名', rpkiNode],
+    ['反向解析', n.rdns?.length && h('div', {class: 'tags'},
+      n.rdns.map(d => mono(d)),
+      n.fcrdns === true ? dot('FCrDNS 通过', 'ok') : n.fcrdns === false ? dot('FCrDNS 未过', 'warn') : null)],
+    ['路由可见度', n.visibility],
+    ['IRR 路由集', mono(p.irr_as_set)],
+    ['滥用信誉 / 联系', [n.abuser_score, n.abuse].filter(Boolean).join(' · ')],
+    ['AS 标签', tags(n.as_tags)],
+    ['同 IP 关联域名', n.domains?.length && h('div', {class: 'vlist'}, tags(n.domains))],
+  ]);
+
+  return card('网络信息', scaleStrip, list || empty('没有网络信息'));
+}
+
+// Band 5: Inline Active Connection & 443 Reality Workbench + CLI/API Quick Snippets
 let seq = 0, ctl = null, probeCtl = null, connModule = null, lastRendered = null, activeProbeState = null;
 
 function clearActiveProbe() {
   probeCtl?.abort();
   probeCtl = null;
   activeProbeState = null;
-  probeDetailsOpener = null;
-  if (probeDialog?.open) probeDialog.close();
-  probeDetailsBody?.replaceChildren();
+  const inline = $('#probeInlineBody');
+  if (inline) inline.replaceChildren();
 }
 
 function inspectBrowserClient() {
@@ -525,15 +769,24 @@ function loadConnectionScript() {
 
 const CHECK_TONE = {pass: ['正常', 'good'], info: ['参考', 'info'], warn: ['留意', 'warn'], bot: ['自动化特征', 'bad']};
 
-function renderProbeDialogBody() {
-  if (!probeDetailsBody) return;
-  const st = activeProbeState || {};
-  const section = (title, ...children) => h('section', {class: 'score-detail-section'}, h('h3', null, title), children);
+function renderProbeInline() {
+  const box = $('#probeInlineBody');
+  const btn = $('#deepProbeBtn');
+  if (!box) return;
+  const st = activeProbeState;
+  if (!st) {
+    box.replaceChildren();
+    if (btn) btn.textContent = '开始连接与 443 实测';
+    return;
+  }
+  if (btn) btn.textContent = st.running ? '正在实测…' : '重新实测连接与 443';
+
   const rows = items => h('ul', {class: 'score-detail-list'}, items);
-  const parts = [];
+  const panels = [];
 
   if (st.running) {
-    parts.push(h('p', {class: 'status'}, spinner(), '正在实测当前连接出口、HTTP 握手与 443 证书特征…'));
+    panels.push(h('div', {class: 'probe-panel wide'},
+      h('p', {class: 'status', style: {'margin-bottom': '0'}}, spinner(), '正在实测访客出口 443 证书、多目标分流路径与浏览器协议栈特征…')));
   }
 
   // 1. Exit 443 TLS / Reality Masquerade
@@ -544,16 +797,20 @@ function renderProbeDialogBody() {
       : t.verdict === 'closed' ? '443 未开放（常规终端特征）'
       : t.verdict === 'skipped' ? '未执行公网回探'
       : t.tls_active ? '开放 443 / TLS 服务' : '开放 443 非 TLS 端口';
-    parts.push(section('访客出口 443 端口与证书核验', kv([
-      ['实测出口', mono(st.server.ip)],
-      ['核验结论', h('div', {class: 'tags'}, pill(vText, vTone), t.rtt_ms ? h('span', {class: 'mut mono'}, `${t.rtt_ms} ms`) : null)],
-      ['TLS 协议', t.tls_version],
-      ['证书域名', (t.subject_cn || t.sans?.length) && mono([t.subject_cn, ...(t.sans || [])].filter((x, i, a) => x && a.indexOf(x) === i).slice(0, 5).join(', '))],
-      ['签发机构', t.issuer && (t.issuer + (t.self_signed ? '（自签名）' : ''))],
-      ['说明', t.detail],
-    ])));
+    panels.push(h('div', {class: 'probe-panel'},
+      h('h3', null, '访客出口 443 端口与证书核验'),
+      kv([
+        ['实测出口', mono(st.server.ip)],
+        ['核验结论', h('div', {class: 'tags'}, pill(vText, vTone), t.rtt_ms ? h('span', {class: 'mut mono'}, `${t.rtt_ms} ms`) : null)],
+        ['TLS 协议', t.tls_version],
+        ['证书域名', (t.subject_cn || t.sans?.length) && mono([t.subject_cn, ...(t.sans || [])].filter((x, i, a) => x && a.indexOf(x) === i).slice(0, 5).join(', '))],
+        ['签发机构', t.issuer && (t.issuer + (t.self_signed ? '（自签名）' : ''))],
+        ['说明', t.detail],
+      ])));
   } else if (st.serverError) {
-    parts.push(section('访客出口 443 端口与证书核验', empty('未能完成：' + st.serverError)));
+    panels.push(h('div', {class: 'probe-panel'},
+      h('h3', null, '访客出口 443 端口与证书核验'),
+      empty('未能完成：' + st.serverError)));
   }
 
   // 2. Live HTTP + Browser Human/Automation Checks
@@ -563,7 +820,8 @@ function renderProbeDialogBody() {
     const combinedAuto = clamp(Math.round(reqProbe.automation_share * 0.65 + clientEnv.autoPts * 0.35));
     const combinedHuman = 100 - combinedAuto;
     const allChecks = [...(reqProbe.checks || []), ...clientEnv.checks];
-    parts.push(section('当前访客实时人机特征明细',
+    panels.push(h('div', {class: 'probe-panel'},
+      h('h3', null, '当前访客实时人机特征核验'),
       h('div', {class: 'ratio-wrap'},
         h('div', {class: 'ratio-bar probe-split'},
           h('span', {class: 'seg seg-a', style: {width: combinedHuman + '%'}}),
@@ -590,31 +848,32 @@ function renderProbeDialogBody() {
       if (p.id === 'tcp') return [d.os, d.relay === true ? '疑似中继栈' : d.relay === false ? '原生协议栈' : '', d.mismatch ? '与 UA 系统不一致' : ''].filter(Boolean).join(' · ');
       return [d.ip, d.loc, d.colo ? '节点 ' + d.colo : '', d.warp === 'on' ? 'WARP 开启' : ''].filter(Boolean).join(' · ');
     };
-    parts.push(section('多目标出口、DNS / WebRTC 与协议栈观测',
+    panels.push(h('div', {class: 'probe-panel wide'},
+      h('h3', null, '多目标分流出口、DNS / WebRTC 与协议栈观测'),
       kv(st.conn.probes.map(p => [p.label, h('span', {class: p.status === 'error' ? 'mut' : ''}, summarizeProbe(p))])),
       st.findings?.length ? rows(st.findings.map(fd => h('li', null,
         h('div', {class: 'score-detail-row'}, h('b', null, fd.title), pill(fd.level === 'warn' ? '差异提示' : '观测说明', fd.level === 'warn' ? 'warn' : 'info')),
         h('p', {class: 'mut'}, fd.detail)))) : null));
   } else if (st.connError) {
-    parts.push(section('多目标出口、DNS / WebRTC 与协议栈观测', empty('未能完成：' + st.connError)));
+    panels.push(h('div', {class: 'probe-panel wide'},
+      h('h3', null, '多目标分流出口、DNS / WebRTC 与协议栈观测'),
+      empty('未能完成：' + st.connError)));
   }
 
-  probeDetailsBody.replaceChildren(...parts);
+  box.replaceChildren(...panels);
 }
 
-async function openProbeDialog(opener) {
-  probeDetailsOpener = opener;
-  if (!probeDialog.open) probeDialog.showModal();
+async function runInlineProbe() {
   if (activeProbeState?.running) return;
   probeCtl?.abort();
   const c = new AbortController();
   probeCtl = c;
   activeProbeState = {running: true, server: null, conn: null, findings: []};
-  renderProbeDialogBody();
+  renderProbeInline();
 
   const serverTask = timed(8000, sig => getJSON('/api/probe', sig), c.signal)
-    .then(data => { if (probeCtl === c) { activeProbeState.server = data; renderProbeDialogBody(); } })
-    .catch(e => { if (probeCtl === c && e.name !== 'AbortError') { activeProbeState.serverError = errText(e); renderProbeDialogBody(); } });
+    .then(data => { if (probeCtl === c) { activeProbeState.server = data; renderProbeInline(); } })
+    .catch(e => { if (probeCtl === c && e.name !== 'AbortError') { activeProbeState.serverError = errText(e); renderProbeInline(); } });
 
   const connTask = loadConnectionScript()
     .then(mod => mod.collect({
@@ -623,123 +882,62 @@ async function openProbeDialog(opener) {
         if (probeCtl !== c) return;
         activeProbeState.conn = snap;
         activeProbeState.findings = mod.analyze(snap, lastRendered);
-        renderProbeDialogBody();
+        renderProbeInline();
       },
     }))
-    .catch(e => { if (probeCtl === c && e.name !== 'AbortError') { activeProbeState.connError = errText(e); renderProbeDialogBody(); } });
+    .catch(e => { if (probeCtl === c && e.name !== 'AbortError') { activeProbeState.connError = errText(e); renderProbeInline(); } });
 
   await Promise.allSettled([serverTask, connTask]);
   if (probeCtl !== c) return;
   activeProbeState.running = false;
-  renderProbeDialogBody();
-}
-$('#probeDetailsClose')?.addEventListener('click', () => probeDialog.close());
-probeDialog?.addEventListener('close', () => { if (probeDetailsOpener?.isConnected) probeDetailsOpener.focus(); });
-
-// Tier 3: Geography + Map (Left) & Consolidated Network / ASN Profile (Right)
-function geoCard(g) {
-  const lat = Number(g.lat) || 0, lon = Number(g.lon) || 0;
-  return card('地理位置', kv([
-    ['洲', bi(g.continent, '', g.continent_code)],
-    ['国家', has([g.country, g.country_en, g.country_code]) && `${g.flag || flag(g.country_code)} ${bi(g.country, g.country_en, g.country_code)}`.trim()],
-    ['地区', bi(g.region, g.region_en, g.region_code)],
-    ['城市', bi(g.city, g.city_en)],
-    ['区县', g.district],
-    ['邮编', g.postal],
-    ['经纬度', (lat || lon) && ext(`https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=10/${lat}/${lon}`, `${lat}, ${lon}`)],
-    ['精度', g.accuracy_km && `约 ${g.accuracy_km} km`],
-    ['时区', g.time_zone],
-    ['UTC 偏移', g.utc_offset],
-    ['货币', g.currency],
-    ['电话区号', g.calling_code],
-    ['欧盟成员', g.is_eu && '是'],
-  ]) || empty('没有地理信息'));
+  renderProbeInline();
 }
 
-let mapView = null, leaflet = null;
-function mapCard(g) {
-  const lat = Number(g.lat), lon = Number(g.lon), acc = Number(g.accuracy_km) || 0, key = [lat, lon, acc].join();
-  if (!(Math.abs(lat) <= 90 && Math.abs(lon) <= 180) || !lat && !lon) return dropMap();
-  if (mapView?.key !== key) {
-    dropMap();
-    const box = h('div', {class: 'map'});
-    mapView = {key, lat, lon, acc, box, el: h('section', {class: 'card mapcard'},
-      h('h2', null, '位置地图', acc ? h('small', null, `圆圈为约 ${acc} km 的定位精度`) : null), box)};
-  }
-  return mapView.el;
-}
-function dropMap() { mapView?.map?.remove(); mapView = null; return null; }
+function workbenchSection(r, pending) {
+  let tz = '';
+  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch {}
+  const lang = navigator.language || (navigator.languages && navigator.languages[0]) || '';
+  const validIP = normIP(r.ip);
+  const baseOrigin = location.origin;
+  const textCmd = `curl -fsSL ${baseOrigin}/${validIP ? validIP : ''}`.replace(/\/$/, '');
+  const jsonPath = validIP ? `/json/${validIP}` : '/json';
+  const jsonCmd = `curl -fsSL ${baseOrigin}${jsonPath}`;
 
-function loadLeaflet() {
-  const load = (tag, props) => new Promise((resolve, reject) => document.head.append(Object.assign(document.createElement(tag), props,
-    {onload: resolve, onerror: () => reject(new Error('无法下载地图组件'))})));
-  return leaflet ||= Promise.all([load('link', {rel: 'stylesheet', href: '/static/vendor/leaflet/leaflet.css?v=1.9.4'}),
-    load('script', {src: '/static/vendor/leaflet/leaflet.js?v=1.9.4'})])
-    .then(() => window.L || Promise.reject(new Error('地图组件无效')), e => { leaflet = null; throw e; });
-}
-async function mountMap() {
-  const v = mapView;
-  if (!v?.el.isConnected || v.loading) return;
-  if (v.map) return void v.map.invalidateSize();
-  v.loading = true;
-  try {
-    const L = await loadLeaflet();
-    if (v !== mapView || !v.el.isConnected) return;
-    const at = [v.lat, v.lon], color = getComputedStyle(v.box).getPropertyValue('--acc').trim() || '#0a6e8a';
-    v.box.replaceChildren();
-    const m = v.map = L.map(v.box, {scrollWheelZoom: false, dragging: !L.Browser.mobile});
-    if (v.acc) {
-      m.fitBounds(L.latLng(at).toBounds(v.acc * 2000), {maxZoom: 12, padding: [16, 16]});
-      L.circle(at, {radius: v.acc * 1000, color, weight: 1, fillOpacity: .1}).addTo(m);
-    } else m.setView(at, 10);
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19, referrerPolicy: 'strict-origin-when-cross-origin',
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors'}).addTo(m);
-    L.circleMarker(at, {radius: 6, color, weight: 2, fillColor: color, fillOpacity: .9}).addTo(m);
-  } catch (e) {
-    v.box.replaceChildren(empty('地图加载失败：' + e.message));
-  } finally { v.loading = false; }
-}
+  const cliRow = (label, cmd) => h('div', {class: 'cli-row'},
+    h('code', {class: 'cli-code', title: cmd}, cmd),
+    h('button', {type: 'button', class: 'btn sm', 'aria-label': '复制' + label, onclick: e => copy(cmd, e.currentTarget)}, '复制'));
 
-function netCard(n) {
-  const p = n.peeringdb || {};
-  const v4Total = fmtInt(n.as_ipv4_count);
-  const scaleNode = v4Total ? [
-    mono(v4Total),
-    (n.as_prefixes_v4 || n.as_prefixes_v6) ? h('span', {class: 'mut'}, `（v4 前缀 ${n.as_prefixes_v4 || 0}${n.as_prefixes_v6 ? ' · v6 前缀 ' + n.as_prefixes_v6 : ''}）`) : null,
-  ] : null;
-  const bandwidthNode = (p.info_traffic || p.info_ratio)
-    ? [p.info_traffic, p.info_traffic && p.info_ratio ? ' · ' : '', p.info_ratio].filter(Boolean).join('')
-    : null;
-  const entity = n.registrant && n.registrant !== n.org ? `${n.registrant}${n.org ? ' / ' + n.org : ''}` : (n.org || n.registrant);
-
-  return card('网络', kv([
-    ['ASN', n.asn && h('div', {class: 'tags'},
-      ext('https://bgp.tools/as/' + n.asn, mono('AS' + n.asn)),
-      h('button', {type: 'button', class: 'btn sm', onclick: e => copy('AS' + n.asn, e.currentTarget, '复制 ASN')}, '复制 ASN'))],
-    ['AS 名称', n.as_name],
-    ['AS 类型', n.as_type_label || p.info_type || n.as_class],
-    ['IPv4 地址量', scaleNode],
-    ['预估带宽', bandwidthNode],
-    ['AS 注册日期', mono(n.as_created)],
-    ['企业 / 主体', entity],
-    ['ISP', n.isp && n.isp !== n.as_name ? n.isp : null],
-    ['BGP 前缀', mono(n.bgp_prefix || n.prefix)],
-    ['网络名称', n.net_name],
-    ['注册机构', [n.registry && n.registry.toUpperCase(), n.allocated].filter(Boolean).join(' · ')],
-    ['反向解析', n.rdns?.length && h('div', {class: 'tags'},
-      n.rdns.map(d => mono(d)),
-      n.fcrdns === true ? dot('FCrDNS 通过', 'ok') : n.fcrdns === false ? dot('FCrDNS 未过', 'warn') : null)],
-    ['路由可见度', n.visibility],
-    ['滥用评分', mono(n.abuser_score)],
-    ['滥用联系', n.abuse],
-    ['AS 标签', tags(n.as_tags)],
-    ['互联设施', (p.ix_count || p.fac_count || p.policy) && [
-      p.policy ? `政策 ${p.policy}` : '',
-      p.ix_count ? `IX ${p.ix_count}` : '',
-      p.fac_count ? `机房 ${p.fac_count}` : '',
-    ].filter(Boolean).join(' · ')],
-    ['同 IP 域名', n.domains?.length && h('div', {class: 'vlist'}, tags(n.domains))],
-  ]) || empty('没有网络信息'));
+  return h('section', {id: 'workbenchCard', class: 'card'},
+    h('div', {class: 'workbench-grid'},
+      h('div', {class: 'wb-pane'},
+        h('div', {class: 'card-title-group'},
+          h('h2', null, '实时连通与 443 伪装核验'),
+          h('p', {class: 'card-sub'}, '仅在点击后按需发起：检测你当前浏览器的真实公网出口、多目标分流一致性与 443 借证伪装')),
+        h('ul', {class: 'wb-checklist'},
+          h('li', null, '出口 TCP/443 证书与 Reality 借证核验'),
+          h('li', null, 'Cloudflare / ChatGPT / Claude 分流对照'),
+          h('li', null, 'DNS / EDNS 客户端子网区域比对'),
+          h('li', null, 'WebRTC STUN 候选与协议栈指纹')),
+        h('div', {class: 'wb-actions'},
+          h('button', {
+            id: 'deepProbeBtn',
+            type: 'button',
+            class: 'btn primary',
+            disabled: pending,
+            onclick: () => runInlineProbe(),
+          }, activeProbeState?.running ? '正在实测…' : activeProbeState ? '重新实测连接与 443' : '开始连接与 443 实测'),
+          (tz || lang) ? h('span', {class: 'mut mono', style: {'font-size': '12px'}},
+            ['本地时区 ' + (tz || '未知'), lang ? '语言 ' + lang : ''].filter(Boolean).join(' · ')) : null)),
+      h('div', {class: 'wb-pane wb-pane-right'},
+        h('div', {class: 'card-title-group'},
+          h('h2', null, '终端命令与 JSON 接口'),
+          h('p', {class: 'card-sub'}, '支持服务器终端无头直连查询或自动化脚本拉取结构化 JSON 报告')),
+        h('div', {class: 'cli-list'},
+          cliRow('终端纯文本命令', textCmd),
+          cliRow('JSON 接口命令', jsonCmd)),
+        h('div', {class: 'wb-actions'},
+          ext(jsonPath, '查看当前 IP 原始 JSON')))),
+    h('div', {id: 'probeInlineBody', class: 'probe-inline', 'aria-live': 'polite'}));
 }
 
 function setStatus(cls, ...kids) { statusEl.className = 'status' + (cls ? ' ' + cls : ''); statusEl.replaceChildren(...kids); }
@@ -748,13 +946,17 @@ function render(r, pending = false, failed = false) {
   lastRendered = r;
   const parts = [verdictCard(r, pending, failed)];
   if (r.mode && !r.bogon) {
-    parts.push(insightRow(r, pending && !failed));
+    const busy = pending && !failed;
+    parts.push(trafficAndScenarioRow(r, busy));
+    parts.push(riskAndSubnetRow(r, busy));
     const geo = geoCard(r.geo || {}), network = netCard(r.network || {});
     geo.classList.add('geo-card'); network.classList.add('net-card'); network.id = 'network';
-    parts.push(h('div', {class: 'grid2'}, h('div', {class: 'col'}, geo, mapCard(r.geo || {})), network));
+    parts.push(h('div', {id: 'infraGrid', class: 'grid2'}, h('div', {class: 'col'}, geo, mapCard(r.geo || {})), network));
+    parts.push(workbenchSection(r, busy));
   } else dropMap();
   out.replaceChildren(...parts);
   out.classList.remove('stale');
+  if (activeProbeState) renderProbeInline();
   mountMap();
 }
 

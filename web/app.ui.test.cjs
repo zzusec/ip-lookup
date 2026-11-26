@@ -882,10 +882,12 @@ test('human-vs-bot traffic ratio, multi-dimensional network audit and live visit
     assert.ok(secText.includes(unsafe), 'untrusted strings render as literal text');
 
     const subnetText = await f.page.locator('#subnetCard').innerText();
-    assert.match(subnetText, /网段连带与暴露面审计/);
+    assert.match(subnetText, /IP 黑名单与同段脏邻居/);
+    assert.match(subnetText, /同段脏邻居 \(\/24\)/);
+    assert.match(subnetText, /DNSBL 黑名单/);
     assert.match(subnetText, /69\.63\.223\.0\/24/);
     assert.match(subnetText, /轻度连带/);
-    assert.match(subnetText, /12 \/ 256/);
+    assert.match(subnetText, /脏邻居 12 \/ 256/);
     assert.match(subnetText, /28 包/);
 
     const netText = await f.page.locator('#network').innerText();

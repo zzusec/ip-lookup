@@ -398,7 +398,7 @@ function buildFallbackScenarios(r) {
   ];
 }
 
-function scenarioAndRiskRow(r, pending) {
+function buildScenarioCard(r, pending) {
   const scenarios = buildFallbackScenarios(r);
   const scenarioNames = {
     tiktok: 'TikTok · 短视频分发',
@@ -406,7 +406,7 @@ function scenarioAndRiskRow(r, pending) {
     ai: 'AI 应用 · 主流大模型访问',
     shield: '免盾浏览 · 验证码与邮局信誉',
   };
-  const leftBody = scenarios.length ? h('div', {class: 'scenario-stack'}, scenarios.map(sc => {
+  const body = scenarios.length ? h('div', {class: 'scenario-stack'}, scenarios.map(sc => {
     const pts = Math.max(0, Math.min(10, Number(sc.score) || 0));
     const segs = Array.from({length: 10}, (_, i) => h('i', {class: i < pts ? 'on' : null}));
     return h('div', {class: 'sc-row-card'},
@@ -419,15 +419,17 @@ function scenarioAndRiskRow(r, pending) {
       sc.detail ? h('p', {class: 'sc-desc'}, sc.detail) : null);
   })) : empty(pending ? '正在根据原生性、网络类型与信誉信号生成各业务场景评估…' : '信誉数据不足，暂无法生成场景可用性参考');
 
-  const leftCard = richCard(
+  return richCard(
     'scenarioCard',
     '业务场景可用性参考',
     '结合原生地区、机房/家宽属性与风控记录评估常见场景表现',
     null,
-    leftBody
+    body
   );
+}
 
-  // Right Card: Risk Matrix & Cross-Audit Notes
+// Band 2: Left (Risk & Masquerade Verification) + Right (IP Blacklists & Dirty Neighbors)
+function riskAndBlacklistRow(r, pending) {
   const f = r.flags || {}, a = r.audit || {}, act = a.activity || {};
   const torHit = Boolean(f.is_tor || act.tor_exit || act.tor_relay);
   const leaseHit = Boolean(f.is_leased || a.lease?.leased);
@@ -444,7 +446,7 @@ function scenarioAndRiskRow(r, pending) {
   const trio = h('div', {class: 'audit-trio'},
     h('div', {class: 'trio-box'}, h('span', null, '威胁综述'), h('b', {class: pending ? 'mut' : 'tone-' + riskTone}, riskSummary)),
     h('div', {class: 'trio-box'}, h('span', null, '滥用评级'), h('b', {class: pending ? 'mut' : 'tone-' + abuseTone}, abuseLevel)),
-    h('div', {class: 'trio-box'}, h('span', null, '蜜罐黑名单'), h('b', {class: pending ? 'mut' : 'tone-' + honeyTone}, honeyStatus)));
+    h('div', {class: 'trio-box'}, h('span', null, 'IP 黑名单状态'), h('b', {class: pending ? 'mut' : 'tone-' + honeyTone}, honeyStatus)));
 
   const checkCell = (name, hit, hitText, severity = 'bad', tip = '') => {
     if (pending) return h('div', {class: 'check-cell'}, h('span', {class: 'check-name'}, name), h('span', {class: 'mut'}, '…'));
@@ -483,7 +485,7 @@ function scenarioAndRiskRow(r, pending) {
       h('ul', {class: 'hb-signals'}, sigs.map(s => h('li', null, s)))) : null,
     specialFlags.length ? h('div', {class: 'tags'}, specialFlags) : null);
 
-  const rightCard = richCard(
+  const leftCard = richCard(
     'securityCard',
     '风险与技术核验',
     '识别匿名代理隧道、商业租赁重宣告网段与伪家宽特征',
@@ -493,13 +495,9 @@ function scenarioAndRiskRow(r, pending) {
     auditNotes
   );
 
-  return h('div', {id: 'insightGrid', class: 'grid2'}, leftCard, rightCard);
-}
-
-// Band 4: Left (/24 Neighbor Density, Threat Telemetry & Port Exposure) + Right (Live Probe & CLI Workbench)
-function subnetAndWorkbenchRow(r, pending) {
-  const a = r.audit || {}, act = a.activity || {};
+  // Right Card: IP Blacklists & Same-Subnet Dirty Neighbors
   const nb = a.neighbor;
+  const subMask = r.version === 6 ? '/48' : '/24';
   const totalCells = 32;
   let dirtyCells = 0, dirtyCls = 'dirty-warn';
   if (nb && nb.flagged > 0) {
@@ -509,38 +507,45 @@ function subnetAndWorkbenchRow(r, pending) {
   }
   const nbTone = !nb ? 'neutral' : nb.flagged === 0 ? 'good' : nb.level === '高危脏段' ? 'bad' : 'warn';
   const nbRightLabel = !nb ? (pending ? '扫描中…' : '离线库未加载')
-    : nb.total ? `${nb.flagged} / ${nb.total} 命中` + (nb.density_pct ? ` (${fmtPct(nb.density_pct)})` : '')
-    : `${nb.flagged} 个子块命中`;
+    : nb.total ? `脏邻居 ${nb.flagged} / ${nb.total}` + (nb.density_pct ? ` (${fmtPct(nb.density_pct)})` : '')
+    : `脏邻居 ${nb.flagged} 个子块`;
 
   const subnetBox = h('div', {class: 'subnet-box'},
     h('div', {class: 'subnet-head'},
       h('div', {class: 'tags'},
-        h('b', null, '同段邻居健康度'),
+        h('b', null, `同段脏邻居 (${subMask})`),
         nb?.prefix ? mono(nb.prefix) : null),
       nb ? pill(nb.level || (nb.flagged === 0 ? '纯净网段' : '存在连带'), nbTone) : h('span', {class: 'mut'}, nbRightLabel)),
-    h('div', {class: nb ? 'subnet-grid' : 'subnet-grid pending', role: 'img', 'aria-label': '同段风险邻居密度示意'},
+    h('div', {class: nb ? 'subnet-grid' : 'subnet-grid pending', role: 'img', 'aria-label': '同段脏邻居污染密度示意'},
       Array.from({length: totalCells}, (_, i) => h('i', {class: i < dirtyCells ? dirtyCls : null}))),
     h('div', {class: 'subnet-foot'},
-      h('span', null, nb ? nbRightLabel : '按同 /24 (IPv4) 或 /48 (IPv6) 统计风险邻居密度'),
-      nb?.lists_loaded ? h('span', null, `已比对 ${nb.lists_loaded} 个离线情报集`) : null),
-    nb?.categories?.length ? h('div', {class: 'tags', style: {'margin-top': '6px'}}, nb.categories.map(c => tag('邻居命中：' + c))) : null);
+      h('span', null, nb ? nbRightLabel : `按同 ${subMask} 网段统计黑名单与代理脏邻居数量`),
+      nb?.lists_loaded ? h('span', null, `已比对 ${nb.lists_loaded} 份黑名单与代理库`) : null),
+    nb?.categories?.length ? h('div', {class: 'tags', style: {'margin-top': '6px'}}, nb.categories.map(c => tag('脏邻居类型：' + c))) : null);
 
   const dnsblTotal = (r.dnsbl || []).length;
   const dnsblHits = (r.dnsbl || []).filter(d => d.listed).length;
+  const blackHits = (r.lists || []).filter(l => ['abuse', 'tor', 'proxy', 'vpn'].includes(l.category)).map(l => l.label).filter(Boolean);
+  const otherListHits = (r.lists || []).filter(l => !['abuse', 'tor', 'proxy', 'vpn'].includes(l.category)).map(l => l.label).filter(Boolean);
   const telemetry = h('div', {class: 'stat-strip four'},
-    statTile('DNSBL 联防', pending ? '…' : `${dnsblHits} / ${dnsblTotal}`, dnsblHits > 0 ? '存在黑名单记录' : '实时黑名单核验', dnsblHits > 0 ? 'bot mono' : 'mono'),
+    statTile('DNSBL 黑名单', pending ? '…' : `${dnsblHits} / ${dnsblTotal}`, dnsblHits > 0 ? '命中实时黑名单' : '实时联防未命中', dnsblHits > 0 ? 'bot mono' : 'mono'),
+    statTile('离线黑名单库', pending ? '…' : `${blackHits.length} 命中`, blackHits.length > 0 ? '命中恶意/代理集' : '威胁名单未命中', blackHits.length > 0 ? 'bot mono' : 'mono'),
     statTile('垃圾表单记录', pending ? '…' : `${act.spam_reports || 0} 次`, act.spam_last_seen ? '最近 ' + act.spam_last_seen : 'StopForumSpam', act.spam_reports > 0 ? 'bot mono' : 'mono'),
-    statTile('蜜罐捕获包', pending ? '…' : `${act.dshield_packets || 0} 包`, act.dshield_targets ? `涉及 ${act.dshield_targets} 目标` : 'DShield 扫描库', act.dshield_packets > 0 ? 'bot mono' : 'mono'),
-    statTile('威胁情报脉冲', pending ? '…' : `${act.otx_pulses || 0} 条`, act.tor_neighbors ? `同段 Tor ${act.tor_neighbors}` : 'AlienVault OTX', act.otx_pulses > 0 ? 'bot mono' : 'mono'));
+    statTile('蜜罐捕获包', pending ? '…' : `${act.dshield_packets || 0} 包`, act.otx_pulses ? `OTX 脉冲 ${act.otx_pulses} 条` : (act.dshield_targets ? `涉及 ${act.dshield_targets} 目标` : 'DShield / OTX'), (act.dshield_packets > 0 || act.otx_pulses > 0) ? 'bot mono' : 'mono'));
 
   const openPorts = r.ports?.ports || [];
   const cpes = (r.ports?.cpes || []).map(fmtCPE).filter(Boolean);
   const vulns = r.ports?.vulns || [];
   const portTags = r.ports?.tags || [];
-  const listHits = (r.lists || []).map(l => l.label).filter(Boolean);
-  const cleanRow = (k, v) => has(v) ? h('div', {class: 'clean-row'}, h('span', {class: 'clean-k'}, k), h('div', {class: 'clean-v'}, v)) : null;
 
   const exposureBox = h('div', {class: 'exposure-box'}, kv([
+    ['黑名单核验', pending ? h('span', {class: 'mut'}, '核验中…')
+      : (blackHits.length || dnsblHits > 0)
+        ? h('div', {class: 'tags'},
+            dnsblHits > 0 ? pill(`DNSBL 命中 ${dnsblHits} 家`, 'bad') : null,
+            blackHits.slice(0, 6).map(x => pill(x, 'bad')))
+        : dot('未命中实时 DNSBL 与离线恶意黑名单', 'ok')],
+    ['网段归属名录', otherListHits.length ? tags(otherListHits.slice(0, 5)) : null],
     ['公开暴露端口', openPorts.length
       ? tags(openPorts.slice(0, 14))
       : (pending ? h('span', {class: 'mut'}, '正在查询暴露端口…') : dot('未见常见公开暴露端口', 'ok'))],
@@ -549,20 +554,33 @@ function subnetAndWorkbenchRow(r, pending) {
     ['关联漏洞编号', vulns.length ? h('div', {class: 'tags'},
       pill(`关联 ${vulns.length} 项 CVE`, 'bad'),
       vulns.slice(0, 4).map(v => mono(v))) : null],
-    ['离线名单命中', listHits.length ? tags(listHits.slice(0, 6), x => pill(x, 'warn')) : null],
   ]));
 
-  const leftCard = richCard(
+  const detailAction = h('button', {
+    type: 'button',
+    class: 'btn sm',
+    disabled: pending || !r.mode,
+    onclick: e => showScoreDetails(r, e.currentTarget),
+  }, '黑名单明细');
+
+  const rightCard = richCard(
     'subnetCard',
-    '网段连带与暴露面审计',
-    '核查同子网邻居连带污染、多源蜜罐遥测与公网开放端口',
-    null,
+    'IP 黑名单与同段脏邻居',
+    '并发核查 14 家实时 DNSBL、60+ 离线黑名单库与同 C 段脏邻居污染比例',
+    detailAction,
     subnetBox,
     telemetry,
     exposureBox
   );
 
-  // Right Card: On-Demand Active Probe + CLI/JSON Quick Calls
+  return h('div', {id: 'insightGrid', class: 'grid2'}, leftCard, rightCard);
+}
+
+// Band 3: Left (4-Scenario Suitability Cards) + Right (Live Probe & CLI Workbench)
+function scenarioAndWorkbenchRow(r, pending) {
+  const leftCard = buildScenarioCard(r, pending);
+  const cleanRow = (k, v) => has(v) ? h('div', {class: 'clean-row'}, h('span', {class: 'clean-k'}, k), h('div', {class: 'clean-v'}, v)) : null;
+
   let tz = '', rawPath = '';
   try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch {}
   try { rawPath = decodeURIComponent(location.pathname.slice(1)).replace(/\/+$/, ''); } catch {}
@@ -991,11 +1009,11 @@ function render(r, pending = false, failed = false) {
   const parts = [verdictCard(r, pending, failed)];
   if (r.mode && !r.bogon) {
     const busy = pending && !failed;
-    parts.push(scenarioAndRiskRow(r, busy));
+    parts.push(riskAndBlacklistRow(r, busy));
+    parts.push(...scenarioAndWorkbenchRow(r, busy));
     const geo = geoCard(r.geo || {}), network = netCard(r.network || {});
     geo.classList.add('geo-card'); network.classList.add('net-card'); network.id = 'network';
     parts.push(h('div', {id: 'infraGrid', class: 'grid2'}, h('div', {class: 'col'}, geo, mapCard(r.geo || {})), network));
-    parts.push(...subnetAndWorkbenchRow(r, busy));
   } else dropMap();
   out.replaceChildren(...parts);
   out.classList.remove('stale');

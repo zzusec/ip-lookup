@@ -576,9 +576,8 @@ function riskAndBlacklistRow(r, pending) {
   return h('div', {id: 'insightGrid', class: 'grid2'}, leftCard, rightCard);
 }
 
-// Band 3: Left (4-Scenario Suitability Cards) + Right (Live Probe & CLI Workbench)
-function scenarioAndWorkbenchRow(r, pending) {
-  const leftCard = buildScenarioCard(r, pending);
+// Bottom Band: On-Demand Live Probe & CLI / JSON Workbench (placed at the bottom of the page)
+function buildWorkbenchSection(r, pending) {
   const cleanRow = (k, v) => has(v) ? h('div', {class: 'clean-row'}, h('span', {class: 'clean-k'}, k), h('div', {class: 'clean-v'}, v)) : null;
 
   let tz = '', rawPath = '';
@@ -606,28 +605,29 @@ function scenarioAndWorkbenchRow(r, pending) {
     h('code', {class: 'cli-code', title: cmd}, cmd),
     h('button', {type: 'button', class: 'btn sm', 'aria-label': '复制' + label, onclick: e => copy(cmd, e.currentTarget)}, '复制'));
 
-  const rightCard = richCard(
+  const workbenchCard = richCard(
     'workbenchCard',
     '实时连通与终端接口',
     '按需实测当前浏览器出口分流、443 借证伪装，或通过终端拉取报告',
     null,
-    h('div', {class: 'wb-card-body'},
-      visitorHandshake,
-      h('ul', {class: 'wb-checklist'},
-        h('li', null, '出口 TCP/443 证书与 Reality 借证核验'),
-        h('li', null, 'Cloudflare / ChatGPT / Claude 分流对照'),
-        h('li', null, 'DNS / EDNS 客户端子网区域比对'),
-        h('li', null, 'WebRTC STUN 候选与协议栈指纹')),
-      h('div', {class: 'wb-actions'},
-        h('button', {
-          id: 'deepProbeBtn',
-          type: 'button',
-          class: 'btn primary',
-          disabled: pending,
-          onclick: () => runInlineProbe(),
-        }, activeProbeState?.running ? '正在实测…' : activeProbeState ? '重新实测连接与 443' : '开始连接与 443 实测'),
-        (tz || lang) ? h('span', {class: 'mut mono', style: {'font-size': '12px'}},
-          ['时区 ' + (tz || '未知'), lang ? '语言 ' + lang : ''].filter(Boolean).join(' · ')) : null),
+    h('div', {class: 'wb-split'},
+      h('div', {class: 'wb-card-body'},
+        visitorHandshake,
+        h('ul', {class: 'wb-checklist'},
+          h('li', null, '出口 TCP/443 证书与 Reality 借证核验'),
+          h('li', null, 'Cloudflare / ChatGPT / Claude 分流对照'),
+          h('li', null, 'DNS / EDNS 客户端子网区域比对'),
+          h('li', null, 'WebRTC STUN 候选与协议栈指纹')),
+        h('div', {class: 'wb-actions'},
+          h('button', {
+            id: 'deepProbeBtn',
+            type: 'button',
+            class: 'btn primary',
+            disabled: pending,
+            onclick: () => runInlineProbe(),
+          }, activeProbeState?.running ? '正在实测…' : activeProbeState ? '重新实测连接与 443' : '开始连接与 443 实测'),
+          (tz || lang) ? h('span', {class: 'mut mono', style: {'font-size': '12px'}},
+            ['时区 ' + (tz || '未知'), lang ? '语言 ' + lang : ''].filter(Boolean).join(' · ')) : null)),
       h('div', {class: 'wb-cli-block'},
         h('div', {class: 'wb-cli-head'}, h('span', null, '终端命令与 JSON 接口'), ext(jsonPath, '查看原始 JSON')),
         cliRow('终端纯文本命令', textCmd),
@@ -635,7 +635,7 @@ function scenarioAndWorkbenchRow(r, pending) {
   );
 
   return [
-    h('div', {id: 'auditGrid', class: 'grid2'}, leftCard, rightCard),
+    workbenchCard,
     h('div', {id: 'probeInlineBody', class: 'probe-inline', 'aria-live': 'polite'}),
   ];
 }
@@ -1010,10 +1010,11 @@ function render(r, pending = false, failed = false) {
   if (r.mode && !r.bogon) {
     const busy = pending && !failed;
     parts.push(riskAndBlacklistRow(r, busy));
-    parts.push(...scenarioAndWorkbenchRow(r, busy));
+    parts.push(buildScenarioCard(r, busy));
     const geo = geoCard(r.geo || {}), network = netCard(r.network || {});
     geo.classList.add('geo-card'); network.classList.add('net-card'); network.id = 'network';
     parts.push(h('div', {id: 'infraGrid', class: 'grid2'}, h('div', {class: 'col'}, geo, mapCard(r.geo || {})), network));
+    parts.push(...buildWorkbenchSection(r, busy));
   } else dropMap();
   out.replaceChildren(...parts);
   out.classList.remove('stale');

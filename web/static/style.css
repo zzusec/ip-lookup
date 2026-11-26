@@ -178,8 +178,8 @@ main.wrap{padding-top:18px;padding-bottom:12px}
 .stat-tile .st-v.bot{color:var(--bot)}
 .stat-tile .st-sub{font-size:11.5px;color:var(--mut);line-height:1.35;overflow-wrap:anywhere}
 
-/* Band 2 Left: Detailed 4-Scenario Suitability Cards */
-.scenario-stack{display:flex;flex-direction:column;gap:10px}
+/* Band 3: Detailed 4-Scenario Suitability Cards (2x2 Grid) */
+.scenario-stack{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .sc-row-card{padding:11px 14px;border-radius:10px;background:var(--soft);border:1px solid var(--line);display:flex;flex-direction:column;gap:6px;min-width:0}
 .sc-row-top{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
 .sc-name-wrap{display:flex;align-items:center;gap:8px;min-width:0}
@@ -230,13 +230,14 @@ main.wrap{padding-top:18px;padding-bottom:12px}
 .clean-k{color:var(--mut)}
 .clean-v{display:flex;align-items:center;justify-content:flex-start;gap:6px;flex-wrap:wrap;text-align:left;min-width:0;overflow-wrap:anywhere}
 
-/* Band 4 Right: Live Probe & CLI Card + Full-Width Inline Probe Expansion */
-.wb-card-body{display:flex;flex-direction:column;gap:12px}
+/* Bottom Band: Compact Two-Column Live Probe & CLI Card + Full-Width Inline Probe Expansion */
+.wb-split{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:16px 22px;align-items:start}
+.wb-card-body{display:flex;flex-direction:column;gap:12px;min-width:0}
 .wb-checklist{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px;margin:0;padding:10px 12px;border-radius:9px;background:var(--soft);border:1px solid var(--line);list-style:none;font-size:12.5px;color:var(--mut)}
 .wb-checklist li{display:flex;align-items:center;gap:6px}
 .wb-checklist li::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--acc);flex:none}
 .wb-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
-.wb-cli-block{padding-top:12px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
+.wb-cli-block{padding-left:20px;border-left:1px solid var(--line);display:flex;flex-direction:column;gap:8px;min-width:0}
 .wb-cli-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12.5px;font-weight:600;color:var(--ink)}
 .wb-cli-head a{font-size:12px;font-weight:500}
 .cli-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 10px;border-radius:8px;background:var(--soft);border:1px solid var(--line);min-width:0}
@@ -279,7 +280,8 @@ main.wrap{padding-top:18px;padding-bottom:12px}
 .ratio-legend{display:flex;justify-content:space-between;gap:6px 12px;flex-wrap:wrap;margin-top:5px;font-size:12px;color:var(--mut)}
 
 @media (max-width:860px){
-  .grid2,.probe-inline{grid-template-columns:minmax(0,1fr)}
+  .grid2,.probe-inline,.wb-split,.scenario-stack{grid-template-columns:minmax(0,1fr)}
+  .wb-cli-block{padding-left:0;border-left:0;padding-top:12px;border-top:1px solid var(--line)}
   .stat-strip.four{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (max-width:760px){

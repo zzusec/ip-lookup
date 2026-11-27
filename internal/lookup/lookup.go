@@ -84,12 +84,7 @@ func (s *Service) online(ctx context.Context, o *sources.Out, a netip.Addr, asn 
 			}
 			h = o.Hints()
 		}
-		aq := q
-		aq.Prefix, _ = netip.ParsePrefix(firstOf(h, "bgp_prefix:cymru", "bgp_prefix:ripe"))
-		if n, err := strconv.Atoi(firstOf(h, "origin_asn:cymru", "origin_asn:ripe")); err == nil && n > 0 {
-			aq.ASN = n
-		}
-		after = s.Online.Run(ctx, aq, o, true)
+		after = s.Online.Run(ctx, observedRouteQuery(q, h), o, true)
 	}()
 	st := s.Online.Run(ctx, q, o, false)
 	close(first)
@@ -100,6 +95,19 @@ func (s *Service) online(ctx context.Context, o *sources.Out, a netip.Addr, asn 
 		r.Sources = append(r.Sources, cy)
 		r.Sources = append(r.Sources, dnsSources...)
 	})
+}
+
+func observedRouteQuery(query sources.Query, hints map[string]string) sources.Query {
+	query.Prefix = netip.Prefix{}
+	for _, source := range []string{"cymru", "ripe"} {
+		prefix, err := netip.ParsePrefix(hints["bgp_prefix:"+source])
+		asn, asnErr := strconv.Atoi(hints["origin_asn:"+source])
+		if err == nil && prefix.Contains(query.Addr.Unmap()) && asnErr == nil && asn > 0 {
+			query.Prefix, query.ASN = prefix.Masked(), asn
+			break
+		}
+	}
+	return query
 }
 
 // finish runs the classification once every source has reported.
@@ -211,16 +219,16 @@ func fillCountries(r *model.Result) {
 }
 
 var trustedGeoWeight = map[string]int{
-	"ip2region":        6,
-	"Merged-IP":        5,
-	"ip-api.com":       4,
-	"ipwho.is":         3,
-	"DB-IP City Lite":  3,
-	"ipinfo.io":        3,
-	"IP2Location.io":   3,
-	"ipdata.co":        2,
-	"ip.sb":            2,
-	"ipapi.is":         2,
+	"ip2region":       6,
+	"Merged-IP":       5,
+	"ip-api.com":      4,
+	"ipwho.is":        3,
+	"DB-IP City Lite": 3,
+	"ipinfo.io":       3,
+	"IP2Location.io":  3,
+	"ipdata.co":       2,
+	"ip.sb":           2,
+	"ipapi.is":        2,
 }
 
 func hasCJK(s string) bool {

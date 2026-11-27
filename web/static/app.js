@@ -446,23 +446,25 @@ function riskAndBlacklistRow(r, pending) {
   const masqHit = Boolean(a.flow?.masquerade);
   const sigs = Array.isArray(r.traffic?.bot_signals) ? r.traffic.bot_signals : [];
 
-  const riskSummary = a.risk_summary || (pending ? '评估中…' : (f.is_tor || f.is_abuser ? '发现明显威胁标记' : f.is_proxy || f.is_vpn || leaseHit ? '存在代理或租赁特征' : '未发现明显威胁'));
-  const riskTone = a.risk_tone || (f.is_tor || f.is_abuser ? 'bad' : f.is_proxy || f.is_vpn || leaseHit ? 'warn' : 'good');
-  const abuseLevel = a.abuse_level || (pending ? '评估中…' : (f.is_abuser ? '高风险' : '纯净'));
-  const abuseTone = a.abuse_tone || (f.is_abuser ? 'bad' : 'good');
-  const honeyStatus = a.honeypot_status || (pending ? '评估中…' : '纯净');
-  const honeyTone = a.honeypot_tone || 'good';
+  const noRating = pending ? '评估中…' : '数据不足';
+  const riskSummary = a.risk_summary || (f.is_tor || f.is_abuser ? '发现明显威胁标记' : f.is_proxy || f.is_vpn || leaseHit ? '存在代理或租赁特征' : noRating);
+  const riskTone = a.risk_tone || (f.is_tor || f.is_abuser ? 'bad' : f.is_proxy || f.is_vpn || leaseHit ? 'warn' : 'neutral');
+  const abuseLevel = a.abuse_level || (f.is_abuser ? '高风险' : noRating);
+  const abuseTone = a.abuse_tone || (f.is_abuser ? 'bad' : 'neutral');
+  const honeyStatus = a.honeypot_status || noRating;
+  const honeyTone = a.honeypot_tone || 'neutral';
 
   const trio = h('div', {class: 'audit-trio'},
     h('div', {class: 'trio-box'}, h('span', null, '威胁综述'), h('b', {class: pending ? 'mut' : 'tone-' + riskTone}, riskSummary)),
     h('div', {class: 'trio-box'}, h('span', null, '滥用评级'), h('b', {class: pending ? 'mut' : 'tone-' + abuseTone}, abuseLevel)),
     h('div', {class: 'trio-box'}, h('span', null, 'IP 黑名单状态'), h('b', {class: pending ? 'mut' : 'tone-' + honeyTone}, honeyStatus)));
 
-  const checkCell = (name, hit, hitText, severity = 'bad', tip = '') => {
+  const hasSignals = (r.sources || []).some(source => source.status === 'ok' && source.reputation);
+  const checkCell = (name, hit, hitText, severity = 'bad', tip = '', observed = hasSignals) => {
     if (pending) return h('div', {class: 'check-cell'}, h('span', {class: 'check-name'}, name), h('span', {class: 'mut'}, '…'));
     return h('div', {class: hit ? 'check-cell hit-' + severity : 'check-cell', title: tip || null},
       h('span', {class: 'check-name'}, name),
-      hit ? dot(hitText, severity) : dot('未检测到', 'ok'));
+      hit ? dot(hitText, severity) : dot(observed ? '未检测到相关标记' : '缺少证据', 'info'));
   };
 
   const checkGrid = h('div', {class: 'check-grid'},
@@ -470,8 +472,8 @@ function riskAndBlacklistRow(r, pending) {
     checkCell('代理 (Proxy)', Boolean(f.is_proxy), '检测到', 'bad'),
     checkCell('Tor 匿名节点', torHit, f.is_tor || act.tor_exit ? '出口节点' : '中继节点', 'bad'),
     checkCell('爬虫 / 机器人', Boolean(f.is_crawler), '检测到', 'warn'),
-    checkCell('商业地址租赁', leaseHit, a.lease?.broker || '租赁网段', 'warn', a.lease?.detail || ''),
-    checkCell('家宽流量核验', masqHit, '疑似伪家宽', 'bad', a.flow?.detail || ''));
+    checkCell('商业地址租赁', leaseHit, a.lease?.broker || '租赁网段', 'warn', a.lease?.detail || '', Boolean(a.lease && (r.network?.net_name || r.network?.org || r.network?.as_name || r.network?.isp))),
+    checkCell('家宽流量核验', masqHit, '疑似伪家宽', 'bad', a.flow?.detail || '', Boolean(a.flow?.traffic_ratio && a.flow.traffic_ratio !== 'Not Disclosed')));
 
   const specialFlags = [
     f.is_anycast ? tag('Anycast 任播节点', 195) : null,
@@ -480,8 +482,8 @@ function riskAndBlacklistRow(r, pending) {
     f.is_public_service ? tag('公共基础设施', 180) : null,
   ].filter(Boolean);
 
-  const leaseDetail = a.lease?.detail || (pending ? '正在核验商业 IP 租赁经纪商名录…' : '未命中已知商业 IP 租赁经纪商（IPXO / InterLIR / Cloud Innovation 等）');
-  const flowDetail = a.flow?.detail || (pending ? '正在交叉比对自治系统流量方向…' : '未发现出向型服务器流量冒充家庭宽带的异常特征');
+  const leaseDetail = a.lease?.detail || (pending ? '正在核验商业 IP 租赁经纪商名录…' : '缺少注册或运营名称');
+  const flowDetail = a.flow?.detail || (pending ? '正在交叉比对自治系统流量方向…' : '未取得可核验的自治系统流量方向');
 
   const auditNotes = h('div', {class: 'audit-notes'},
     h('div', {class: 'audit-note-item'},
@@ -533,15 +535,19 @@ function riskAndBlacklistRow(r, pending) {
       nb?.lists_loaded ? h('span', null, `已比对 ${nb.lists_loaded} 份黑名单与代理库`) : null),
     nb?.categories?.length ? h('div', {class: 'tags', style: {'margin-top': '6px'}}, nb.categories.map(c => tag('脏邻居类型：' + c))) : null);
 
-  const dnsblTotal = (r.dnsbl || []).length;
-  const dnsblHits = (r.dnsbl || []).filter(d => d.listed).length;
+  const dnsbl = r.dnsbl || [], checked = dnsbl.filter(entry => !entry.error && typeof entry.listed === 'boolean');
+  const dnsblHits = checked.filter(entry => entry.listed).length, missed = dnsbl.length - checked.length;
+  const dnsStatus = missed ? `${missed} 项未确认` : checked.length ? '有效应答' : r.version === 6 ? '不适用于 IPv6' : '未取得应答';
+  const offlineChecked = nb?.lists_loaded > 0;
+  const spamKnown = act.spam_reports > 0 || (r.sources || []).some(source => source.name === 'StopForumSpam' && source.status === 'ok' && source.reputation);
+  const packetsKnown = act.dshield_count_known || act.dshield_packets > 0;
   const blackHits = (r.lists || []).filter(l => ['abuse', 'tor', 'proxy', 'vpn'].includes(l.category)).map(l => l.label).filter(Boolean);
   const otherListHits = (r.lists || []).filter(l => !['abuse', 'tor', 'proxy', 'vpn'].includes(l.category)).map(l => l.label).filter(Boolean);
   const telemetry = h('div', {class: 'stat-strip four'},
-    statTile('DNSBL 黑名单', pending ? '…' : `${dnsblHits} / ${dnsblTotal}`, dnsblHits > 0 ? '命中实时黑名单' : '实时联防未命中', dnsblHits > 0 ? 'bot mono' : 'mono'),
-    statTile('离线黑名单库', pending ? '…' : `${blackHits.length} 命中`, blackHits.length > 0 ? '命中恶意/代理集' : '威胁名单未命中', blackHits.length > 0 ? 'bot mono' : 'mono'),
-    statTile('垃圾表单记录', pending ? '…' : `${act.spam_reports || 0} 次`, act.spam_last_seen ? '最近 ' + act.spam_last_seen : 'StopForumSpam', act.spam_reports > 0 ? 'bot mono' : 'mono'),
-    statTile('蜜罐捕获包', pending ? '…' : `${act.dshield_packets || 0} 包`, act.otx_pulses ? `OTX 脉冲 ${act.otx_pulses} 条` : (act.dshield_targets ? `涉及 ${act.dshield_targets} 目标` : 'DShield / OTX'), (act.dshield_packets > 0 || act.otx_pulses > 0) ? 'bot mono' : 'mono'));
+    statTile('DNSBL 黑名单', pending ? '…' : checked.length ? `${dnsblHits} / ${checked.length} 命中` : '未知', pending ? '' : dnsStatus, dnsblHits > 0 ? 'bot mono' : 'mono'),
+    statTile('离线黑名单库', pending ? '…' : blackHits.length || offlineChecked ? `${blackHits.length} 命中` : '未知', blackHits.length ? '命中恶意/代理集' : offlineChecked ? '限已加载的名单' : '无可用名单', blackHits.length > 0 ? 'bot mono' : 'mono'),
+    statTile('垃圾表单记录', pending ? '…' : spamKnown ? `${act.spam_reports || 0} 次` : '未知', act.spam_last_seen ? '最近 ' + act.spam_last_seen : 'StopForumSpam', act.spam_reports > 0 ? 'bot mono' : 'mono'),
+    statTile('蜜罐捕获包', pending ? '…' : packetsKnown ? `${act.dshield_packets || 0} 包` : '未知', act.otx_pulses ? `OTX 脉冲 ${act.otx_pulses} 条` : (act.dshield_targets ? `涉及 ${act.dshield_targets} 目标` : 'DShield / OTX'), (act.dshield_packets > 0 || act.otx_pulses > 0) ? 'bot mono' : 'mono'));
 
   const openPorts = r.ports?.ports || [];
   const cpes = (r.ports?.cpes || []).map(fmtCPE).filter(Boolean);
@@ -554,11 +560,11 @@ function riskAndBlacklistRow(r, pending) {
         ? h('div', {class: 'tags'},
             dnsblHits > 0 ? pill(`DNSBL 命中 ${dnsblHits} 家`, 'bad') : null,
             blackHits.slice(0, 6).map(x => pill(x, 'bad')))
-        : dot('未命中实时 DNSBL 与离线恶意黑名单', 'ok')],
+        : checked.length || offlineChecked ? dot('本次取得结果的名单未命中', 'info') : dot('无可用名单结果', 'info')],
     ['网段归属名录', otherListHits.length ? tags(otherListHits.slice(0, 5)) : null],
     ['公开暴露端口', openPorts.length
       ? tags(openPorts.slice(0, 14))
-      : (pending ? h('span', {class: 'mut'}, '正在查询暴露端口…') : dot('未见常见公开暴露端口', 'ok'))],
+      : (pending ? h('span', {class: 'mut'}, '正在查询暴露端口…') : dot(Array.isArray(r.ports?.ports) ? '该来源未列出端口' : '无可用端口记录', 'info'))],
     ['服务组件指纹', tags(cpes.slice(0, 6))],
     ['协议与主机标签', portTags.length ? tags(portTags, t => tag(t, 195)) : null],
     ['关联漏洞编号', vulns.length ? h('div', {class: 'tags'},
@@ -794,11 +800,14 @@ function netCard(n) {
 
   const rpkiRaw = String(n.rpki || '');
   const rpkiNode = !rpkiRaw ? null
-    : rpkiRaw === '有效' || (/valid/i.test(rpkiRaw) && !/invalid/i.test(rpkiRaw)) ? dot('Valid（路由源验证有效）', 'ok')
+    : rpkiRaw === '有效' || /^valid$/i.test(rpkiRaw) ? dot('Valid（路由源验证有效）', 'ok')
     : /无效|invalid/i.test(rpkiRaw) ? pill('Invalid（' + rpkiRaw + '）', 'bad')
     : dot(rpkiRaw, 'info');
 
   const entity = n.registrant && n.registrant !== n.org ? `${n.registrant}${n.org ? ' / ' + n.org : ''}` : (n.org || n.registrant);
+  const origins = Array.isArray(n.bgp_origins) ? n.bgp_origins : [];
+  const ptrLabels = {matched: '回指本 IP', mismatch: '回指其他 IP', no_address: '无同族地址', benchmark_answer: '正查返回测试网段，未确认', error: '查询失败', not_checked: '未核验'};
+  const ptrChecks = new Map((n.fcrdns_checks || []).map(check => [check.name, check.status]));
 
   const list = kv([
     ['ASN', n.asn && h('div', {class: 'tags'},
@@ -811,13 +820,15 @@ function netCard(n) {
     ['企业 / 主体', entity],
     ['运营服务商', n.isp && n.isp !== n.as_name ? n.isp : null],
     ['BGP 路由前缀', mono(n.bgp_prefix || n.prefix)],
+    ['BGP 起源（RIPE RIS）', origins.length ? h('div', {class: 'tags'},
+      dot(origins.length > 1 ? '观测到多个起源' : '观测到一个起源', 'info'), origins.map(asn => mono('AS' + asn))) : n.bgp_prefix ? '未取得起源记录' : null],
     ['所属注册网段', n.prefix && n.bgp_prefix && n.prefix !== n.bgp_prefix ? mono(n.prefix) : null],
     ['网络名称', mono(n.net_name)],
     ['注册局与分配', [n.registry && n.registry.toUpperCase(), n.allocated].filter(Boolean).join(' · ')],
-    ['RPKI 路由签名', rpkiNode],
-    ['反向解析', n.rdns?.length && h('div', {class: 'tags'},
-      n.rdns.map(d => mono(d)),
-      n.fcrdns === true ? dot('FCrDNS 通过', 'ok') : n.fcrdns === false ? dot('FCrDNS 未过', 'warn') : null)],
+    ['RPKI 路由签名', rpkiNode && h('div', {class: 'tags'}, rpkiNode, n.rpki_asn && n.rpki_prefix ? mono(`AS${n.rpki_asn} · ${n.rpki_prefix}`) : null)],
+    ['反向解析', n.rdns?.length && h('div', {class: 'vlist'},
+      n.rdns.map(name => h('div', {class: 'tags'}, mono(name), ptrChecks.has(name) ? tag(ptrLabels[ptrChecks.get(name)] || '未知') : null)),
+      n.fcrdns === true ? dot('FCrDNS 通过', 'ok') : n.fcrdns === false ? dot('FCrDNS 未过', 'warn') : dot('FCrDNS 未确认', 'info'))],
     ['路由可见度', n.visibility],
     ['IRR 路由集', mono(p.irr_as_set)],
     ['滥用信誉 / 联系', [n.abuser_score, n.abuse].filter(Boolean).join(' · ')],
@@ -962,8 +973,8 @@ function renderProbeInline() {
       if (p.status === 'pending') return '探测中…';
       if (p.status !== 'ok' || !p.data) return p.error || '未返回';
       const d = p.data;
-      if (p.id === 'rtc') return d.publicIPs?.length ? '公网候选 ' + d.publicIPs.join(', ') : (d.mdns ? '仅 mDNS 隐藏候选' : '未暴露公网候选');
-      if (p.id === 'dns') return [d.ip, d.country, d.org, d.ecs?.subnet ? 'ECS ' + d.ecs.subnet : ''].filter(Boolean).join(' · ');
+      if (p.id === 'rtc') return [d.publicIPs?.length ? 'STUN 公网反射候选 ' + d.publicIPs.join(', ') : '未取得 STUN 公网反射候选', d.otherPublicCandidate ? '另有非反射或类型未知的公网候选' : '', d.mdns ? '有 mDNS 隐藏候选' : '', d.note].filter(Boolean).join(' · ');
+      if (p.id === 'dns') return [d.ip, d.country, d.org, d.ecs?.subnet ? 'ECS ' + d.ecs.subnet : '', d.ecsError].filter(Boolean).join(' · ');
       if (p.id === 'tcp') return [d.os, d.relay === true ? '疑似中继栈' : d.relay === false ? '原生协议栈' : '', d.mismatch ? '与 UA 系统不一致' : ''].filter(Boolean).join(' · ');
       return [d.ip, d.loc, d.colo ? '节点 ' + d.colo : '', d.warp === 'on' ? 'WARP 开启' : ''].filter(Boolean).join(' · ');
     };
@@ -992,7 +1003,7 @@ async function runInlineProbe() {
 
   const serverTask = timed(8000, sig => getJSON('/api/probe', sig), c.signal)
     .then(data => { if (probeCtl === c) { activeProbeState.server = data; renderProbeInline(); } })
-    .catch(e => { if (probeCtl === c && e.name !== 'AbortError') { activeProbeState.serverError = errText(e); renderProbeInline(); } });
+    .catch(e => { if (probeCtl === c && !c.signal.aborted) { activeProbeState.serverError = errText(e); renderProbeInline(); } });
 
   const connTask = loadConnectionScript()
     .then(mod => mod.collect({

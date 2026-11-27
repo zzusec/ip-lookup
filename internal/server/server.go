@@ -29,6 +29,7 @@ type Server struct {
 	RiskCheckURL       string // optional fallback URL for the sibling risk-check tab
 	DisableActiveProbe bool   // skip outbound :443 probes on /api/probe when set
 	Log                *slog.Logger
+	Admin              *AdminPanel
 	limit              *rateLimiter
 	probeLimit         *rateLimiter
 	tlsCache           *tlsProbeCache
@@ -57,12 +58,24 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.HandleFunc("GET /api/lookup", s.apiLookup)
 	mux.HandleFunc("GET /api/probe", s.apiProbe)
 	mux.HandleFunc("GET /api/sources", s.apiSources)
+	adminMux := http.NewServeMux()
+	if err := s.Admin.register(adminMux, s); err != nil {
+		return nil, err
+	}
 	mux.HandleFunc("GET /json", s.jsonLookup)
 	mux.HandleFunc("GET /json/{ip}", s.jsonLookup)
 	mux.HandleFunc("GET /{$}", s.page)
 	mux.HandleFunc("GET /{ip}", s.page)
-	return s.wrap(mux), nil
+	return s.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isAdminPath(r.URL.Path) {
+			adminMux.ServeHTTP(w, r)
+		} else {
+			mux.ServeHTTP(w, r)
+		}
+	})), nil
 }
+
+func isAdminPath(path string) bool { return path == "/admin" || strings.HasPrefix(path, "/admin/") }
 
 // wrap adds security headers, the http->https redirect and access logging.
 func (s *Server) wrap(h http.Handler) http.Handler {
@@ -72,7 +85,11 @@ func (s *Server) wrap(h http.Handler) http.Handler {
 		hd.Set("X-Content-Type-Options", "nosniff")
 		hd.Set("Referrer-Policy", "no-referrer")
 		hd.Set("X-Frame-Options", "DENY")
-		if s.forwardedProto(r) == "http" && isBrowser(r) && r.URL.Path != "/healthz" {
+		adminPath := isAdminPath(r.URL.Path)
+		if adminPath {
+			hd.Set("Cache-Control", "no-store")
+		}
+		if !adminPath && s.forwardedProto(r) == "http" && isBrowser(r) && r.URL.Path != "/healthz" {
 			http.Redirect(w, r, "https://"+r.Host+r.URL.RequestURI(), http.StatusMovedPermanently)
 			return
 		}
@@ -81,8 +98,11 @@ func (s *Server) wrap(h http.Handler) http.Handler {
 		}
 		sw := &statusWriter{ResponseWriter: w, code: 200}
 		h.ServeHTTP(sw, r)
-		if r.URL.Path != "/healthz" && !strings.HasPrefix(r.URL.Path, "/static/") {
-			s.Log.Info("http", "method", r.Method, "path", r.URL.Path, "status", sw.code,
+		if !adminPath && s.Admin != nil && r.Method == http.MethodGet {
+			s.Admin.usage.observe(r.Pattern, sw.code, hd.Get("Content-Type"))
+		}
+		if !adminPath && r.URL.Path != "/healthz" && !strings.HasPrefix(r.URL.Path, "/static/") {
+			s.Log.Info("http", "method", r.Method, "route", r.Pattern, "status", sw.code,
 				"ms", time.Since(start).Milliseconds())
 		}
 	})

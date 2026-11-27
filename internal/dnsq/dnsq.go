@@ -19,8 +19,14 @@ import (
 
 // Resolver is a DNS client bound to fixed upstream servers.
 type Resolver struct {
-	r       *net.Resolver
+	r       dnsClient
 	Timeout time.Duration
+}
+
+type dnsClient interface {
+	LookupAddr(context.Context, string) ([]string, error)
+	LookupNetIP(context.Context, string, string) ([]netip.Addr, error)
+	LookupTXT(context.Context, string) ([]string, error)
 }
 
 // New returns a resolver that tries servers in turn, e.g. "1.1.1.1:53".
@@ -42,33 +48,67 @@ func (r *Resolver) ctx(parent context.Context) (context.Context, context.CancelF
 	return context.WithTimeout(parent, r.Timeout)
 }
 
-// Reverse returns the PTR names of a and whether one of them resolves back to a.
-func (r *Resolver) Reverse(ctx context.Context, a netip.Addr) ([]string, bool, error) {
+// Reverse reports each PTR and whether any resolves back to the queried address.
+func (r *Resolver) Reverse(ctx context.Context, a netip.Addr) ([]model.FCrDNSCheck, *bool, error) {
+	a = a.Unmap()
 	c, cancel := r.ctx(ctx)
-	defer cancel()
-	names, err := r.r.LookupAddr(c, a.String())
-	if err != nil {
-		if notFound(err) {
-			return nil, false, nil
+	names, ptrErr := r.r.LookupAddr(c, a.String())
+	cancel()
+	if len(names) == 0 && ptrErr != nil {
+		if notFound(ptrErr) {
+			return nil, nil, nil
 		}
-		return nil, false, err
+		return nil, nil, ptrErr
 	}
-	names = slices.DeleteFunc(names, func(n string) bool { return strings.Trim(n, ".") == "" })
-	for i, n := range names {
-		names[i] = strings.TrimSuffix(n, ".")
+	network := "ip4"
+	if a.Is6() {
+		network = "ip6"
 	}
-	if len(names) == 0 {
-		return nil, false, nil
-	}
-	for _, n := range names[:min(len(names), 3)] {
-		c2, cancel2 := r.ctx(ctx)
-		addrs, err := r.r.LookupNetIP(c2, "ip", abs(n))
-		cancel2()
-		if err == nil && slices.ContainsFunc(addrs, func(x netip.Addr) bool { return x.Unmap() == a.Unmap() }) {
-			return names, true, nil
+	var checks []model.FCrDNSCheck
+	seen := map[string]bool{}
+	matched, uncertain := false, ptrErr != nil
+	for _, name := range names {
+		name = strings.TrimRight(name, ".")
+		key := strings.ToLower(name)
+		if name == "" || seen[key] {
+			continue
 		}
+		seen[key] = true
+		status := "not_checked"
+		if len(checks) < 3 && !matched && ctx.Err() == nil {
+			forward, stop := r.ctx(ctx)
+			addrs, err := r.r.LookupNetIP(forward, network, abs(name))
+			stop()
+			switch {
+			case notFound(err):
+				status = "no_address"
+			case err != nil:
+				status = "error"
+			case len(addrs) == 0:
+				status = "no_address"
+			case slices.ContainsFunc(addrs, func(addr netip.Addr) bool { return addr.Unmap() == a }):
+				status, matched = "matched", true
+			case slices.ContainsFunc(addrs, benchmarkAddress):
+				status = "benchmark_answer"
+			default:
+				status = "mismatch"
+			}
+		}
+		uncertain = uncertain || status == "error" || status == "not_checked" || status == "benchmark_answer"
+		checks = append(checks, model.FCrDNSCheck{Name: name, Status: status})
 	}
-	return names, false, nil
+	if len(checks) == 0 || (!matched && uncertain) {
+		return checks, nil, ptrErr
+	}
+	return checks, &matched, ptrErr
+}
+
+var benchmarkV4 = netip.MustParsePrefix("198.18.0.0/15")
+var benchmarkV6 = netip.MustParsePrefix("2001:2::/48")
+
+func benchmarkAddress(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	return benchmarkV4.Contains(addr) || benchmarkV6.Contains(addr)
 }
 
 // abs makes name absolute. The Go resolver still appends the search domains
@@ -113,6 +153,9 @@ func (r *Resolver) Cymru(ctx context.Context, a netip.Addr) (Origin, error) {
 	defer cancel()
 	txt, err := r.r.LookupTXT(c, originName(a))
 	if err != nil {
+		if notFound(err) {
+			return Origin{}, nil
+		}
 		return Origin{}, err
 	}
 	// Several origins may be listed; prefer the most specific prefix.
@@ -123,21 +166,31 @@ func (r *Resolver) Cymru(ctx context.Context, a netip.Addr) (Origin, error) {
 		if len(f) < 5 {
 			continue
 		}
-		asn, _ := strconv.Atoi(strings.Fields(f[0])[0])
-		p, err := netip.ParsePrefix(f[1])
-		if err != nil || p.Bits() <= bestLen {
+		asns := strings.Fields(f[0])
+		if len(asns) == 0 {
 			continue
 		}
-		best, bestLen = Origin{ASN: asn, Prefix: f[1], CC: f[2], Registry: f[3], Allocated: f[4]}, p.Bits()
+		asn, err := strconv.Atoi(asns[0])
+		if err != nil || asn <= 0 || uint64(asn) > 1<<32-1 {
+			continue
+		}
+		p, err := netip.ParsePrefix(f[1])
+		if err != nil || !p.Contains(a.Unmap()) || p.Bits() <= bestLen {
+			continue
+		}
+		best, bestLen = Origin{ASN: asn, Prefix: p.Masked().String(), CC: f[2], Registry: f[3], Allocated: f[4]}, p.Bits()
 	}
 	if bestLen < 0 {
 		return Origin{}, errors.New("no origin record")
 	}
 	c2, cancel2 := r.ctx(ctx)
 	defer cancel2()
-	if txt, err := r.r.LookupTXT(c2, asName(best.ASN)); err == nil && len(txt) > 0 {
-		if f := fields(txt[0]); len(f) >= 5 {
-			best.ASName = f[4]
+	if txt, err := r.r.LookupTXT(c2, asName(best.ASN)); err == nil {
+		for _, record := range txt {
+			if f := fields(record); len(f) >= 5 && f[0] == strconv.Itoa(best.ASN) {
+				best.ASName = f[4]
+				break
+			}
 		}
 	}
 	return best, nil
@@ -170,6 +223,38 @@ var Zones = []string{
 
 func dnsblName(a netip.Addr, zone string) string { return abs(reversed(a) + "." + zone) }
 
+func dnsblAnswer(zone string, addrs []netip.Addr, err error) model.DNSBL {
+	res := model.DNSBL{Zone: zone}
+	if err != nil {
+		if !notFound(err) {
+			res.Error = "lookup failed"
+		}
+		return res
+	}
+	var code netip.Addr
+	for _, addr := range addrs {
+		addr = addr.Unmap()
+		if !addr.Is4() || !addr.IsLoopback() {
+			res.Error = "unexpected answer " + addr.String()
+			return res
+		}
+		octets := addr.As4()
+		if octets[1] == 255 && octets[2] == 255 {
+			res.Answer, res.Error = addr.String(), "refused "+addr.String()
+			return res
+		}
+		if !code.IsValid() || addr.Less(code) {
+			code = addr
+		}
+	}
+	if code.IsValid() {
+		res.Listed, res.Answer = true, code.String()
+	} else {
+		res.Error = "empty resolver response"
+	}
+	return res
+}
+
 // DNSBL checks a against every zone concurrently. IPv6 is skipped by most
 // zones, so only IPv4 is queried.
 func (r *Resolver) DNSBL(ctx context.Context, a netip.Addr) []model.DNSBL {
@@ -182,23 +267,10 @@ func (r *Resolver) DNSBL(ctx context.Context, a netip.Addr) []model.DNSBL {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			res := model.DNSBL{Zone: z}
 			c, cancel := r.ctx(ctx)
 			defer cancel()
 			addrs, err := r.r.LookupNetIP(c, "ip4", dnsblName(a, z))
-			switch {
-			case err == nil && len(addrs) > 0 && addrs[0].Is4() && addrs[0].As4()[0] == 127:
-				res.Listed, res.Answer = true, addrs[0].String()
-			case err == nil && len(addrs) > 0:
-				// 127.255.255.x and non-loopback answers are resolver refusals, not listings.
-				res.Error = "unexpected answer " + addrs[0].String()
-			case err != nil && !notFound(err):
-				res.Error = "lookup failed"
-			}
-			if res.Listed && strings.HasPrefix(res.Answer, "127.255.255.") {
-				res.Listed, res.Error = false, "refused "+res.Answer
-			}
-			out[i] = res
+			out[i] = dnsblAnswer(z, addrs, err)
 		}()
 	}
 	wg.Wait()

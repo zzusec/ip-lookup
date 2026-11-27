@@ -23,3 +23,17 @@ func TestTextReputationAvailability(t *testing.T) {
 		}
 	}
 }
+
+func TestTextDNSSeparatesUnavailableEvidence(t *testing.T) {
+	result := &model.Result{Network: model.Network{RDNS: []string{"mail.example"}, FCrDNSChecks: []model.FCrDNSCheck{{Name: "mail.example", Status: "error"}}}, DNSBL: []model.DNSBL{{Zone: "a", Listed: true}, {Zone: "b"}, {Zone: "c", Error: "refused"}}}
+	text := Text(result, "ip.example.com")
+	for _, want := range []string{"正反解未能确定", "mail.example：查询失败", "1/2 命中，另有 1 个查询失败"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q in %s", want, text)
+		}
+	}
+	result.DNSBL = result.DNSBL[2:]
+	if text := Text(result, "ip.example.com"); !strings.Contains(text, "未知 · 1 个查询均失败") || strings.Contains(text, "0/1 命中") {
+		t.Errorf("absent DNSBL answers presented as evidence: %s", text)
+	}
+}

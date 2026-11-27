@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -193,7 +195,12 @@ func ripeRPKI() *Provider {
 			if label == "" {
 				label = d.Data.Status
 			}
-			o.Do(func(r *model.Result) { r.Network.RPKI = label })
+			if label == "" {
+				return ErrNotFound
+			}
+			o.Do(func(r *model.Result) {
+				r.Network.RPKI, r.Network.RPKIASN, r.Network.RPKIPrefix = label, q.ASN, q.Prefix.String()
+			})
 			return nil
 		}}
 }
@@ -214,7 +221,7 @@ func ripeRouting() *Provider {
 					Resource   string
 					FirstSeen  struct{ Time string } `json:"first_seen"`
 					Visibility struct{ V4, V6 vis }
-					Origins    []struct{ Origin int }
+					Origins    []struct{ Origin uint32 }
 				}
 			}
 			if err := json.Unmarshal(raw, &d); err != nil {
@@ -224,22 +231,36 @@ func ripeRouting() *Provider {
 			if q.Addr.Unmap().Is6() {
 				v = d.Data.Visibility.V6
 			}
-			if v.Total == 0 || d.Data.Resource == "" {
+			if v.Total <= 0 {
 				return ErrNotFound
 			}
+			prefix, err := netip.ParsePrefix(d.Data.Resource)
+			if err != nil || !prefix.Contains(q.Addr.Unmap()) || prefix != prefix.Masked() || v.Seeing < 0 || v.Seeing > v.Total {
+				return fmt.Errorf("invalid RIPE routing observation for %s", q.Addr)
+			}
+			var origins []uint32
+			for _, entry := range d.Data.Origins {
+				if entry.Origin == 0 {
+					return fmt.Errorf("invalid RIPE origin for %s", prefix)
+				}
+				origins = append(origins, entry.Origin)
+			}
+			slices.Sort(origins)
+			origins = slices.Compact(origins)
 			text := fmt.Sprintf("%d/%d 个 RIS 对等点可见", v.Seeing, v.Total)
 			if t := d.Data.FirstSeen.Time; len(t) >= 10 {
 				text += "，首次出现 " + t[:10]
 			}
 			o.Hint("bgp_prefix:ripe", d.Data.Resource)
-			if len(d.Data.Origins) > 0 {
-				o.Hint("origin_asn:ripe", strconv.Itoa(d.Data.Origins[0].Origin))
+			if len(origins) == 1 {
+				o.Hint("origin_asn:ripe", strconv.FormatUint(uint64(origins[0]), 10))
 			}
 			o.Do(func(r *model.Result) {
 				r.Network.Visibility = text
 				r.Network.BGPPrefix = d.Data.Resource
-				if len(d.Data.Origins) > 0 && r.Network.ASN == 0 {
-					r.Network.ASN = d.Data.Origins[0].Origin
+				r.Network.BGPOrigins = origins
+				if len(origins) == 1 && r.Network.ASN == 0 {
+					r.Network.ASN = int(origins[0])
 				}
 			})
 			return nil

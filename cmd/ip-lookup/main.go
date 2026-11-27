@@ -40,13 +40,21 @@ func main() {
 	}
 }
 
-func run(log *slog.Logger) error {
+func run(log *slog.Logger) (runErr error) {
 	listen := env("LISTEN", "127.0.0.1:8990")
 	dataDir := env("DATA_DIR", "/var/lib/ip-lookup")
 	contact := env("CONTACT", "https://github.com/zzusec/ip-lookup")
 	ua := "ip-lookup/" + version + " (+" + contact + ")"
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return err
+	}
+	var admin *server.AdminPanel
+	if passwordFile := env("IP_ADMIN_PASSWORD_FILE", ""); passwordFile != "" {
+		var err error
+		admin, err = server.NewAdminPanel(passwordFile, dataDir)
+		if err != nil {
+			return err
+		}
 	}
 
 	data := datasets.NewManager(dataDir, ua, log)
@@ -73,6 +81,7 @@ func run(log *slog.Logger) error {
 		TrustProxy:   env("TRUST_PROXY", "1") == "1",
 		RiskCheckURL: env("RISK_CHECK_URL", ""),
 		Log:          log,
+		Admin:        admin,
 	}
 	h, err := srv.Handler()
 	if err != nil {
@@ -81,6 +90,10 @@ func run(log *slog.Logger) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	if admin != nil {
+		go admin.Run(ctx, log)
+		defer func() { runErr = errors.Join(runErr, admin.Flush()) }()
+	}
 	if env("UPDATE", "1") == "1" {
 		go data.Run(ctx)
 	}

@@ -12,6 +12,15 @@ curl ip.example.com/json/8.8.8.8 # 完整 JSON
 
 ## 工作方式
 
+「网络信息」新增两种逐项观测，复用原有查询，不增加公共接口调用或 DNS 预算：
+
+- **路由起源**：`network.bgp_origins` 列出 RIPE RIS 在相同精确前缀上观察到的所有起源 ASN（排序、去重）。多起源不等于劫持，不因此扣分；RPKI 只对应 `network.rpki_asn` 与 `network.rpki_prefix` 这一对，不代表其他起源。
+- **正反向 DNS 核验**：`network.fcrdns_checks` 显示每个 PTR 名称是否回指原 IP、指向其他地址、无同族记录、查询失败或未核验。最多正查三个去重名称，已有匹配即停止。任一匹配为 `fcrdns: true`，全部查实不匹配才为 `false`，无匹配且证据不完整时省略该字段。第三方提供的主机名不算已验证。
+
+DNSBL 以有效回答为分母，错误、拒答单列；IPv6 不运行此组 IPv4 名单。离线名单未加载、未取得蜜罐计数和明确返回零分别展示。STUN 的公网反射候选才与同族 HTTP 地址比较，主机或中继候选不当成 STUN 出口。
+
+正查只看到其他地址且含有基准测试地址（如本地 DNS 的 Fake-IP）时，逐项状态为 `benchmark_answer`，不能据此断言公网正反解不匹配。不为此自动更换解析器。
+
 页面采用四层对称双栏情报版面，兼顾信息纵深与零重复秩序：第一层核心摘要卡左侧展示 IP 类型结论、ASN、经多源共识投票优选出的**单一最佳匹配地址**及原生/广播核验，右侧上方为 5 档语义纯净度圆环，下方紧接**人机流量比例面板**（含可选桌面端/移动端占比）；第二层直达安全核心，左栏为**风险与技术核验**（威胁综述三宫格、2×3 匿名/租赁/伪家宽核验矩阵与交叉审计说明），右栏为**IP 黑名单与同段脏邻居**（同 `/24` 或 `/48` 脏邻居 32 格密度谱、14 家实时 DNSBL、离线恶意黑名单库、垃圾注册与蜜罐遥测，以及公网暴露端口与组件/CVE 指纹）；第三层左栏为**业务场景可用性参考**（TikTok、社媒运营、AI 应用、免盾浏览 10 段量表及诊断说明），右栏为**实时连通与终端接口**工作台（支持按需内联展开 `:443` Reality 伪装与多目标分流实测，并提供 `curl` / JSON 一键复制）；第四层左栏为地理位置与按需地图，右栏统一收口 ASN 规模指标与 BGP 路由注册画像。手机上 IP 与评分圆环并排放在首屏。支持输入其他 IP、查我的 IP、复制地址。
 
 Go 在首屏直接输出 IP，不等待在线评分，页面响应使用 `Cache-Control: private, no-store`。浏览器并发发起 `fast` 与 `full` 查询，先用快速查询呈现离线基础资料，再以完整结果更新。纯净度等待 `full` 结果，不先显示预设的 100 分；完整查询失败时保留 IP 和已经取得的基础资料，并将纯净度显示为未知（页面文案为“未能评估”）。
@@ -70,6 +79,12 @@ Go 在首屏直接输出 IP，不等待在线评分，页面响应使用 `Cache-
 
 查询别人的 IP 时，每个客户端（IPv6 按 /64 计）每分钟最多 20 次 full 查询。查询自己不受这个限制。
 
+## 独立管理后台
+
+在服务配置中将 `IP_ADMIN_PASSWORD_FILE` 指向只有服务可读的口令文件（可用 systemd `LoadCredential`），重启后通过 HTTPS 打开 `/admin`。口令使用密码管理器或 `openssl rand -hex 32` 单独生成，不与其他站点共用，不放入 URL、仓库或命令行参数。未配置时不启动后台，也不采集后台访问统计。轮换口令需要替换文件并重启服务。
+
+后台显示今日、近 7 天与近 30 天的页面访问、成功查询及错误请求，并列出本服务的数据集和在线来源状态。按 UTC+8 自然日统计：成功的 HTML 页面请求计一次访问；快速与完整 API 查询分别是请求，不是独立访客。仅聚合计数保存在 `DATA_DIR/site-usage.json`，不保留访客 IP、查询目标或浏览器标识。首次启用前不补算历史；管理、健康检查和静态资源不计入流量。后台不读取或同步 WhoProbe 数据。
+
 ## 部署
 
 需要 Go 1.27 以上。离线数据约 330MB，放在 `DATA_DIR` 里，运行时内存大约 50 到 150MB。
@@ -93,7 +108,7 @@ systemctl daemon-reload && systemctl enable --now ip-lookup
 ```sh
 go test ./...
 node --test web/connection.test.cjs
-CHROMIUM_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" node --test web/app.ui.test.cjs
+CHROMIUM_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" node --test web/app.ui.test.cjs web/admin.ui.test.cjs
 ```
 
 浏览器测试需要已安装的 Playwright 与 Chromium / Chrome；支持通过 `CHROMIUM_PATH` 指定浏览器，不自动下载依赖。首页测试使用合成数据验证首屏 IP、摘要与人机流量及多维审计、地理及网络资料、纯净度等待、失败及数据可用性状态、查询与复制操作、按需主动探测与 `:443` Reality 伪装核验、地图按需加载、评分详情及 393px / 390px 手机首屏布局。

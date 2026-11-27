@@ -32,6 +32,23 @@ type DNSBL struct {
 	Error  string `json:"error,omitempty"`
 }
 
+func SummarizeDNSBL(entries []DNSBL) (listed, checked int) {
+	for _, entry := range entries {
+		if entry.Error == "" {
+			checked++
+			if entry.Listed {
+				listed++
+			}
+		}
+	}
+	return listed, checked
+}
+
+type FCrDNSCheck struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
 // Risk preserves a provider's risk figure normalised to 0..100, higher is worse.
 // EffectiveValue optionally records the value used by our scoring policy;
 // Value remains the original reading, not a claim that the address is safe.
@@ -173,13 +190,13 @@ type Scenario struct {
 // NeighborDensity measures how many addresses in the enclosing /24 (IPv4) or
 // /48 (IPv6) appear in loaded abuse, proxy, VPN or Tor datasets.
 type NeighborDensity struct {
-	Prefix     string   `json:"prefix"`
-	Flagged    int      `json:"flagged"`
-	Total      int      `json:"total,omitempty"` // 256 for IPv4 /24; omitted for IPv6 block counts
-	DensityPct float64  `json:"density_pct,omitempty"`
-	Level      string   `json:"level"` // 纯净网段 | 轻度连带 | 中度污染 | 高危脏段
-	Categories []string `json:"categories,omitempty"`
-	ListsLoaded int     `json:"lists_loaded"`
+	Prefix      string   `json:"prefix"`
+	Flagged     int      `json:"flagged"`
+	Total       int      `json:"total,omitempty"` // 256 for IPv4 /24; omitted for IPv6 block counts
+	DensityPct  float64  `json:"density_pct,omitempty"`
+	Level       string   `json:"level"` // 纯净网段 | 轻度连带 | 中度污染 | 高危脏段
+	Categories  []string `json:"categories,omitempty"`
+	ListsLoaded int      `json:"lists_loaded"`
 }
 
 // LeaseCheck identifies IP leasing brokers (IPXO, InterLIR, Cloud Innovation, etc.).
@@ -201,16 +218,17 @@ type FlowAudit struct {
 // ThreatActivity summarises concrete automated/attack telemetry across
 // StopForumSpam, SANS DShield, AlienVault OTX and Tor Onionoo.
 type ThreatActivity struct {
-	SpamReports    int      `json:"spam_reports,omitempty"`
-	SpamLastSeen   string   `json:"spam_last_seen,omitempty"`
-	DShieldPackets int      `json:"dshield_packets,omitempty"`
-	DShieldTargets int      `json:"dshield_targets,omitempty"`
-	OTXPulses      int      `json:"otx_pulses,omitempty"`
-	OTXNames       []string `json:"otx_names,omitempty"`
-	TorRelay       bool     `json:"tor_relay,omitempty"`
-	TorExit        bool     `json:"tor_exit,omitempty"`
-	TorNicknames   []string `json:"tor_nicknames,omitempty"`
-	TorNeighbors   int      `json:"tor_neighbors,omitempty"`
+	SpamReports       int      `json:"spam_reports,omitempty"`
+	SpamLastSeen      string   `json:"spam_last_seen,omitempty"`
+	DShieldPackets    int      `json:"dshield_packets,omitempty"`
+	DShieldCountKnown bool     `json:"dshield_count_known,omitempty"`
+	DShieldTargets    int      `json:"dshield_targets,omitempty"`
+	OTXPulses         int      `json:"otx_pulses,omitempty"`
+	OTXNames          []string `json:"otx_names,omitempty"`
+	TorRelay          bool     `json:"tor_relay,omitempty"`
+	TorExit           bool     `json:"tor_exit,omitempty"`
+	TorNicknames      []string `json:"tor_nicknames,omitempty"`
+	TorNeighbors      int      `json:"tor_neighbors,omitempty"`
 }
 
 // ActiveProbe is returned by /api/probe for on-demand visitor connection and

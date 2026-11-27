@@ -187,7 +187,7 @@
         root.clearTimeout(timer);
         if (signal) signal.removeEventListener('abort', cancel);
         if (pc) { pc.onicecandidate = null; pc.onicecandidateerror = null; try { pc.close(); } catch {} }
-        if (!error && !data.publicIPs.length && !data.localIPs.length && !data.mdns)
+        if (!error && !data.publicIPs.length && !data.localIPs.length && !data.otherPublicCandidate && !data.mdns)
           error = new Error('未收集到 ICE 地址；无法确认 WebRTC 出口' + (errors.size ? '（' + [...errors].join('；') + '）' : ''));
         error ? reject(error) : resolve(data);
       }
@@ -206,7 +206,9 @@
           if (/\.local\.?$/i.test(address)) { data.mdns = true; return; }
           const ip = canonicalIP(address);
           if (!ip) return;
-          const list = isPublic(ip) ? data.publicIPs : data.localIPs;
+          const publicAddress = isPublic(ip), type = text(c.type) || (parts[6] === 'typ' ? parts[7] : '');
+          if (publicAddress && type !== 'srflx') { data.otherPublicCandidate = true; return; }
+          const list = publicAddress ? data.publicIPs : data.localIPs;
           if (!list.includes(ip)) list.push(ip);
         };
         pc.createDataChannel('connection-probe');
@@ -240,7 +242,7 @@
       ['site', '本站观察', () => json('/api/ip').then(o => httpData(o))],
       ['v4', 'IPv4', () => json('https://api4.ipify.org?format=json').then(o => httpData(o, 4))],
       ['v6', 'IPv6', () => json('https://api6.ipify.org?format=json').then(o => httpData(o, 6))],
-      ['pref', '双栈优先协议', () => json('https://api64.ipify.org?format=json').then(o => httpData(o))],
+      ['pref', '双栈目标本次出口', () => json('https://api64.ipify.org?format=json').then(o => httpData(o))],
       ['cf', 'Cloudflare', () => trace('https://1.1.1.1/cdn-cgi/trace')],
       ['chatgpt', 'ChatGPT', () => trace('https://chatgpt.com/cdn-cgi/trace')],
       ['claude', 'Claude', () => trace('https://claude.ai/cdn-cgi/trace')],
@@ -342,18 +344,18 @@
         } else {
           push('rtc-different-v' + family, 'warn', 'WebRTC 与 HTTP 的公网出口不同',
             'WebRTC：' + ip + '；HTTP：' + refs.map(p => canonicalIP(p.data.ip)).join('、') +
-            '。UDP/STUN 与 HTTP 可能走不同路径，需结合实际代理策略核对；尚不能确认哪个地址是本机真实出口。');
+            '。STUN 与 HTTP 可能走不同路径，需结合实际代理策略核对；尚不能确认哪个地址是本机真实出口。');
         }
       }
-      if (!publicIPs.length) push('rtc-local', 'info', 'WebRTC 未提供可比较的公网地址',
-        d.mdns ? '仅观测到本机地址或 mDNS 名称。mDNS 隐藏了候选地址；这不能证明没有公网旁路。' : '本机或保留地址不作为真实公网泄露证据；也不能据此确认公网出口安全。');
+      if (!publicIPs.length) push('rtc-local', 'info', 'WebRTC 未提供可比较的公网反射地址',
+        d.otherPublicCandidate ? '主机、中继或类型未知的公网候选不能证明 STUN 所见出口。' : d.mdns ? '观测到 mDNS 隐藏候选；这不能证明没有公网旁路。' : '本机或保留地址不作为真实公网泄露证据；也不能据此确认公网出口安全。');
     }
     const dns = byID.get('dns');
     if (dns) {
       const d = dns.data, reference = byID.get('site') || http[0], lookup = lookupResult || {};
       const geoMatches = reference && sameIP(lookup.ip, reference.data.ip);
       const exitCountry = geoMatches && lookup.geo && lookup.geo.country_code || reference && reference.data.loc;
-      if (d.country && exitCountry && countryKey(d.country) && countryKey(d.country) !== countryKey(exitCountry))
+      if (countryKey(d.country) && countryKey(exitCountry) && countryKey(d.country) !== countryKey(exitCountry))
         push('dns-country', 'info', 'DNS 与 HTTP 出口的地理定位不同',
           'DNS：' + d.country + (d.org ? ' / ' + d.org : '') + '；HTTP：' + exitCountry +
           '。公共 DNS、Anycast、DoH 和数据库差异均可能造成跨国定位，不能单凭国家不同认定 DNS 泄露。');

@@ -1,0 +1,241 @@
+package server
+
+import (
+	"bytes"
+	"crypto/rand"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/zzusec/ip-lookup/internal/datasets"
+	"github.com/zzusec/ip-lookup/internal/lookup"
+	"github.com/zzusec/ip-lookup/internal/model"
+	"github.com/zzusec/ip-lookup/internal/sources"
+	"github.com/zzusec/ip-lookup/web"
+)
+
+func TestAdminConfiguration(t *testing.T) {
+	dir := t.TempDir()
+	if panel, err := NewAdminPanel("", dir); panel != nil || err != nil {
+		t.Fatal("unconfigured admin must remain disabled")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "site-usage.json")); !os.IsNotExist(err) {
+		t.Fatal("disabled admin must not create usage data")
+	}
+	password := rand.Text() + rand.Text()
+	for _, tc := range []struct {
+		name string
+		data string
+		mode os.FileMode
+	}{
+		{"permissive", password, 0644}, {"weak", "short", 0600},
+		{"single-byte", strings.Repeat("a", 40), 0600}, {"multiple-lines", password + "\nsecond", 0600},
+		{"oversized", strings.Repeat(password, 8), 0600},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(dir, tc.name)
+			if err := os.WriteFile(path, []byte(tc.data), tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(path, tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			if panel, err := NewAdminPanel(path, dir); panel != nil || err == nil {
+				t.Error("unsafe configuration accepted")
+			}
+		})
+	}
+	path := filepath.Join(dir, "protected")
+	if err := os.WriteFile(path, []byte(password+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(path, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewAdminPanel(link, dir); err == nil {
+		t.Error("symbolic link accepted as private password file")
+	}
+}
+
+type adminFixture struct {
+	panel   *AdminPanel
+	handler http.Handler
+	login   string
+	logs    *bytes.Buffer
+}
+
+func newAdminFixture(t *testing.T, enabled bool) adminFixture {
+	t.Helper()
+	dir := t.TempDir()
+	password := rand.Text() + rand.Text()
+	path := ""
+	if enabled {
+		path = filepath.Join(dir, "password")
+		if err := os.WriteFile(path, []byte(password+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	panel, err := NewAdminPanel(path, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs := new(bytes.Buffer)
+	logger := slog.New(slog.NewTextHandler(logs, nil))
+	app := Server{Admin: panel, Web: web.FS, Log: logger, TrustProxy: true, Lookup: &lookup.Service{
+		Data: datasets.NewManager(dir, "test", logger), Online: sources.NewSet(nil, []*sources.Provider{{Name: "test-provider"}}),
+	}}
+	handler, err := app.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]string{"password": password})
+	return adminFixture{panel, handler, string(body), logs}
+}
+
+func (f adminFixture) request(method, target, body, origin string, cookie *http.Cookie, headers map[string]string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, target, strings.NewReader(body))
+	if origin != "" {
+		r.Header.Set("Origin", origin)
+	}
+	r.Header.Set("Content-Type", "application/json")
+	for name, value := range headers {
+		r.Header.Set(name, value)
+	}
+	if cookie != nil {
+		r.AddCookie(cookie)
+	}
+	out := httptest.NewRecorder()
+	f.handler.ServeHTTP(out, r)
+	return out
+}
+
+const adminTestOrigin = "https://ip.example.test"
+
+func (f adminFixture) signIn(t *testing.T) *http.Cookie {
+	t.Helper()
+	out := f.request("POST", adminTestOrigin+"/admin/api/login", f.login, adminTestOrigin, nil, nil)
+	if out.Code != http.StatusNoContent || out.Body.Len() != 0 {
+		t.Fatalf("valid login: status %d, %d response bytes", out.Code, out.Body.Len())
+	}
+	cookies := out.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Path != "/admin" || cookies[0].Domain != "" || !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode || cookies[0].MaxAge <= 0 || !cookies[0].Expires.After(time.Now()) {
+		t.Fatal("login did not set one limited, protected, expiring session cookie")
+	}
+	return cookies[0]
+}
+
+func TestAdminLifecycle(t *testing.T) {
+	f := newAdminFixture(t, true)
+	for _, path := range []string{"/admin", "/admin/"} {
+		out := f.request("GET", adminTestOrigin+path, "", "", nil, nil)
+		if out.Code != http.StatusOK || !strings.Contains(out.Body.String(), "/static/admin.js?v=") || out.Header().Get("Cache-Control") != "no-store" || !strings.Contains(out.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'") {
+			t.Fatalf("wrong private page at %s: status %d", path, out.Code)
+		}
+	}
+	endpoint := adminTestOrigin + "/admin/api/overview"
+	if out := f.request("GET", endpoint, "", "", nil, nil); out.Code != http.StatusUnauthorized || strings.Contains(out.Body.String(), "datasets") {
+		t.Fatalf("overview without session: %d", out.Code)
+	}
+	f.panel.usage.record("view")
+	cookie := f.signIn(t)
+	out := f.request("GET", endpoint, "", "", cookie, nil)
+	var report struct {
+		Usage   usageReport         `json:"usage"`
+		Sources model.SourcesReport `json:"sources"`
+	}
+	if out.Code != http.StatusOK || json.Unmarshal(out.Body.Bytes(), &report) != nil || report.Usage.Schema != 1 || report.Usage.Site != "ip" || len(report.Usage.Days) != 1 || report.Usage.Days[0].PageViews != 1 || len(report.Sources.Online) != 1 || report.Sources.Online[0].Name != "test-provider" {
+		t.Fatal("authenticated overview must combine local aggregate usage and the existing provider report")
+	}
+	logout := adminTestOrigin + "/admin/api/logout"
+	if out := f.request("POST", logout, "{}", "https://other.example.test", cookie, nil); out.Code != http.StatusForbidden {
+		t.Errorf("cross-origin logout: %d", out.Code)
+	}
+	if out := f.request("GET", endpoint, "", "", cookie, nil); out.Code != http.StatusOK {
+		t.Fatal("a rejected request modified the session")
+	}
+	out = f.request("POST", logout, "{}", adminTestOrigin, cookie, nil)
+	if out.Code != http.StatusNoContent || len(out.Result().Cookies()) != 1 || out.Result().Cookies()[0].MaxAge != -1 {
+		t.Fatalf("logout did not clear the cookie: %d", out.Code)
+	}
+	if out := f.request("GET", endpoint, "", "", cookie, nil); out.Code != http.StatusUnauthorized {
+		t.Fatal("logged-out session remained valid")
+	}
+	cookie = f.signIn(t)
+	f.panel.mu.Lock()
+	for key := range f.panel.sessions {
+		f.panel.sessions[key] = time.Now().Add(-time.Minute)
+	}
+	f.panel.mu.Unlock()
+	if out := f.request("GET", endpoint, "", "", cookie, nil); out.Code != http.StatusUnauthorized {
+		t.Fatal("expired session remained valid")
+	}
+	if strings.Contains(f.logs.String(), "admin") || strings.Contains(f.logs.String(), f.login) || strings.Contains(f.logs.String(), cookie.Value) {
+		t.Fatal("private requests must not enter public HTTP logs")
+	}
+}
+
+func TestAdminPostBoundaryAndLoginBudget(t *testing.T) {
+	f := newAdminFixture(t, true)
+	login := adminTestOrigin + "/admin/api/login"
+	for _, tc := range []struct {
+		origin, body, content, fetch string
+		code                         int
+	}{
+		{"", f.login, "application/json", "", 403}, {"https://other.example.test", f.login, "application/json", "", 403},
+		{adminTestOrigin, f.login, "application/json", "cross-site", 403}, {adminTestOrigin, f.login, "text/plain", "", 415},
+		{adminTestOrigin, "{}{}", "application/json", "", 400}, {adminTestOrigin, "null", "application/json", "", 400},
+		{adminTestOrigin, strings.Repeat("x", 3000), "application/json", "", 413},
+	} {
+		out := f.request("POST", login, tc.body, tc.origin, nil, map[string]string{"Content-Type": tc.content, "Sec-Fetch-Site": tc.fetch})
+		if out.Code != tc.code || len(out.Result().Cookies()) != 0 || out.Header().Get("Cache-Control") != "no-store" {
+			t.Errorf("boundary: got %d, want %d", out.Code, tc.code)
+		}
+	}
+	for attempt := 0; attempt < 8; attempt++ {
+		if out := f.request("POST", login, `{"password":"incorrect"}`, adminTestOrigin, nil, nil); out.Code != http.StatusUnauthorized {
+			t.Fatalf("failed login %d: %d", attempt+1, out.Code)
+		}
+	}
+	if out := f.request("POST", login, f.login, adminTestOrigin, nil, nil); out.Code != http.StatusTooManyRequests || out.Header().Get("Retry-After") == "" {
+		t.Fatalf("rate-limited login: %d", out.Code)
+	}
+}
+
+func TestAdminTransportAndDisabled(t *testing.T) {
+	disabled := newAdminFixture(t, false)
+	for _, path := range []string{"/admin", "/admin/", "/admin/api/overview", "/admin/api/login"} {
+		for _, method := range []string{"GET", "POST"} {
+			out := disabled.request(method, adminTestOrigin+path, "", "", nil, nil)
+			if out.Code != http.StatusNotFound || out.Header().Get("Cache-Control") != "no-store" {
+				t.Errorf("disabled %s %s: %d", method, path, out.Code)
+			}
+		}
+	}
+	f := newAdminFixture(t, true)
+	for _, tc := range []struct {
+		remote, host, proto string
+		code                int
+	}{
+		{"192.0.2.12:4000", "ip.example.test", "https", 403}, {"127.0.0.1:4000", "ip.example.test", "https", 200},
+		{"127.0.0.1:4000", "ip.example.test", "http", 403}, {"127.0.0.1:4000", "localhost:9000", "", 200},
+		{"[::1]:4000", "[::1]:9000", "", 200}, {"192.0.2.12:4000", "localhost:9000", "", 403},
+	} {
+		r := httptest.NewRequest("GET", "http://"+tc.host+"/admin", nil)
+		r.RemoteAddr = tc.remote
+		if tc.proto != "" {
+			r.Header.Set("X-Forwarded-Proto", tc.proto)
+		}
+		out := httptest.NewRecorder()
+		f.handler.ServeHTTP(out, r)
+		if out.Code != tc.code {
+			t.Errorf("transport remote=%s host=%s XFP=%s: %d", tc.remote, tc.host, tc.proto, out.Code)
+		}
+	}
+}

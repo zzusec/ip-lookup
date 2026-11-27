@@ -234,7 +234,7 @@ func stopForumSpam() *Provider {
 			var d struct {
 				Success int `json:"success"`
 				IP      *struct {
-					Appears    int     `json:"appears"`
+					Appears    *int    `json:"appears"`
 					Frequency  int     `json:"frequency"`
 					Confidence float64 `json:"confidence"`
 					LastSeen   string  `json:"lastseen"`
@@ -247,7 +247,10 @@ func stopForumSpam() *Provider {
 			if d.Success != 1 || d.IP == nil {
 				return ErrNotFound
 			}
-			if d.IP.Appears == 0 || d.IP.Frequency <= 0 {
+			if d.IP.Appears == nil || (*d.IP.Appears != 0 && *d.IP.Appears != 1) || (*d.IP.Appears == 1 && d.IP.Frequency <= 0) {
+				return fmt.Errorf("incomplete StopForumSpam activity response")
+			}
+			if *d.IP.Appears == 0 {
 				o.Hint("source_note:StopForumSpam", "未见垃圾注册或灌水提交记录")
 				return nil
 			}
@@ -308,7 +311,8 @@ func sansDShield() *Provider {
 				assize = *d.IP.ASSize
 			}
 			abuse := strings.TrimSpace(d.IP.ASAbuseContact)
-			if packets == 0 && targets == 0 && abuse == "" && assize == 0 {
+			countKnown := d.IP.Count != nil && *d.IP.Count >= 0
+			if !countKnown && targets == 0 && abuse == "" && assize == 0 {
 				return ErrNotFound
 			}
 			if packets >= 20 || targets >= 5 {
@@ -321,8 +325,9 @@ func sansDShield() *Provider {
 				if assize > 0 && r.Network.ASIPv4Count == 0 {
 					r.Network.ASIPv4Count = assize
 				}
-				if packets > 0 || targets > 0 {
+				if countKnown || targets > 0 {
 					act := ensureActivity(r)
+					act.DShieldCountKnown = countKnown
 					act.DShieldPackets = packets
 					act.DShieldTargets = targets
 				}

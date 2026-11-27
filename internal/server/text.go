@@ -89,15 +89,40 @@ func Text(r *model.Result, host string) string {
 	if n.BGPPrefix != "" && n.BGPPrefix != n.Prefix {
 		line("BGP 前缀", n.BGPPrefix)
 	}
+	if len(n.BGPOrigins) > 0 {
+		var origins []string
+		for _, asn := range n.BGPOrigins {
+			origins = append(origins, fmt.Sprintf("AS%d", asn))
+		}
+		line("RIS 路由起源", fmt.Sprintf("%s · %s", n.BGPPrefix, strings.Join(origins, ", ")))
+	}
 	line("注册机构", join(strings.ToUpper(n.Registry), n.Allocated))
 	if len(n.RDNS) > 0 {
-		fc := ""
-		if n.FCrDNS != nil && *n.FCrDNS {
-			fc = "（正反解一致）"
+		fc := "（未做前向确认）"
+		if n.FCrDNS != nil {
+			if *n.FCrDNS {
+				fc = "（正反解一致）"
+			} else {
+				fc = "（正反解不一致）"
+			}
+		} else if len(n.FCrDNSChecks) > 0 {
+			fc = "（正反解未能确定）"
 		}
 		line("反向解析", strings.Join(n.RDNS, ", ")+fc)
 	}
-	line("RPKI", n.RPKI)
+	if len(n.FCrDNSChecks) > 0 {
+		label := map[string]string{"matched": "回指该 IP", "mismatch": "指向其他地址", "no_address": "无同地址族记录", "benchmark_answer": "正查返回测试网段，未确认", "error": "查询失败", "not_checked": "未查"}
+		var checks []string
+		for _, check := range n.FCrDNSChecks {
+			checks = append(checks, check.Name+"："+label[check.Status])
+		}
+		line("逐名核验", strings.Join(checks, "；"))
+	}
+	if n.RPKI != "" && n.RPKIASN > 0 && n.RPKIPrefix != "" {
+		line("RPKI", fmt.Sprintf("%s · AS%d %s", n.RPKI, n.RPKIASN, n.RPKIPrefix))
+	} else {
+		line("RPKI", n.RPKI)
+	}
 	line("路由可见度", n.Visibility)
 	line("滥用联系", n.Abuse)
 	if len(r.Lists) > 0 {
@@ -107,14 +132,17 @@ func Text(r *model.Result, host string) string {
 		}
 		line("命中名单", strings.Join(names, "；"))
 	}
-	listed := 0
-	for _, d := range r.DNSBL {
-		if d.Listed {
-			listed++
-		}
-	}
 	if len(r.DNSBL) > 0 {
-		line("DNSBL", fmt.Sprintf("%d/%d 命中", listed, len(r.DNSBL)))
+		listed, checked := model.SummarizeDNSBL(r.DNSBL)
+		if checked == 0 {
+			line("DNSBL", fmt.Sprintf("未知 · %d 个查询均失败", len(r.DNSBL)))
+		} else {
+			result := fmt.Sprintf("%d/%d 命中", listed, checked)
+			if failed := len(r.DNSBL) - checked; failed > 0 {
+				result += fmt.Sprintf("，另有 %d 个查询失败", failed)
+			}
+			line("DNSBL", result)
+		}
 	}
 	if r.Ports != nil && len(r.Ports.Ports) > 0 {
 		ports := make([]string, len(r.Ports.Ports))

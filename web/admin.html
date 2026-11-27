@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="light dark">
+  <title>运营概览 · IP 查询站</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/admin.css">
+  <script src="/static/admin.js" defer></script>
+</head>
+<body class="adm">
+  <header class="top"><div class="wrap adm-top">
+    <a class="adm-brand" href="/"><img src="/static/favicon.svg" width="28" height="28" alt="">IP 查询站</a><span class="adm-label">独立管理后台</span>
+    <button class="btn" type="button" id="logout" hidden>退出登录</button>
+  </div></header>
+  <main class="wrap adm-main">
+    <p id="notice" role="status" aria-live="polite">正在核对管理会话…</p>
+    <button id="retry" type="button" class="btn" hidden>重试</button>
+    <section id="login" hidden aria-labelledby="loginTitle">
+      <h1 id="loginTitle">管理员登录</h1>
+      <form id="loginForm" method="post" action="/admin/api/login">
+        <label for="password">管理密码</label>
+        <input id="password" type="password" autocomplete="current-password" required>
+        <button type="submit" id="submitLogin" class="btn primary">登录</button>
+      </form>
+    </section>
+    <div id="dashboard" hidden>
+      <header class="adm-heading"><div><h1>运营概览</h1><p id="asOf" class="mut"></p></div><button class="btn" type="button" id="refresh">刷新</button></header>
+      <section class="adm-block" aria-labelledby="trafficTitle">
+        <h2 id="trafficTitle">请求量</h2><p id="coverage" class="adm-sub"></p>
+        <table class="counts"><caption class="vh">今日、近 7 天及近 30 天请求数量</caption><thead><tr><th scope="col">时段</th><th scope="col">页面访问</th><th scope="col">成功查询</th><th scope="col">失败查询</th></tr></thead><tbody id="totals"></tbody></table>
+      </section>
+      <section class="adm-block" aria-labelledby="trendTitle"><div class="adm-bar"><h2 id="trendTitle">逐日趋势</h2>
+        <div class="switches" role="group" aria-label="趋势时段"><button type="button" data-span="7" aria-pressed="true">7 天</button><button type="button" data-span="30" aria-pressed="false">30 天</button></div></div>
+        <figure id="trend" hidden><figcaption>页面访问、成功查询、失败查询</figcaption><svg id="plot" viewBox="0 0 600 106" preserveAspectRatio="none" aria-hidden="true"></svg><div id="axis"></div></figure>
+        <details id="dayDetails"><summary>查看每日数值</summary><table class="counts"><caption class="vh">每日请求数</caption><thead><tr><th scope="col">日期</th><th scope="col">页面访问</th><th scope="col">成功查询</th><th scope="col">失败查询</th></tr></thead><tbody id="dayRows"></tbody></table></details>
+      </section>
+      <section class="adm-block" aria-labelledby="sourcesTitle"><h2 id="sourcesTitle">数据源</h2>
+        <div class="source-grid"><section><h3>离线数据集</h3><p id="datasetInfo" class="adm-sub"></p><ul id="datasets" class="source-list"></ul></section><section><h3>在线服务与配额</h3><p id="onlineInfo" class="adm-sub"></p><ul id="online" class="source-list"></ul></section></div>
+      </section>
+    </div>
+    <noscript>此后台需要 JavaScript 才能登录和读取统计。</noscript>
+  </main>
+</body>
+</html>

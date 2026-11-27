@@ -419,6 +419,20 @@ test('score details treat provider names, risk details and errors as text', asyn
   } finally { await f.close(); }
 });
 
+test('failed checks are not rendered as negative blacklist or telemetry results', async () => {
+  const f = await fixture({lookup: ip => ({json: {...report(ip), dnsbl: [{zone: 'timeout.test', listed: false, error: 'timeout'}],
+    lists: [], flags: {}, score: {value: 100, data_status: 'unavailable'}, sources: [{name: 'DNSBL', status: 'error'}]}})});
+  try {
+    await f.page.goto(origin);
+    await textIs(f.page, '#scoreLevel', '未能评估');
+    const blacklist = await f.page.locator('#subnetCard').innerText();
+    assert.doesNotMatch(blacklist, /未命中|0 命中|0 次|0 包|未见常见公开暴露端口/);
+    assert.match(blacklist, /1 项未确认/);
+    const security = await f.page.locator('#securityCard').innerText();
+    assert.doesNotMatch(security, /纯净|未发现明显威胁|未检测到/);
+  } finally { await f.close(); }
+});
+
 test('legacy score factors remain readable when optional risk and DNSBL fields are absent', async () => {
   const f = await fixture({lookup: ip => {
     const result = report(ip);
@@ -436,6 +450,24 @@ test('legacy score factors remain readable when optional risk and DNSBL fields a
     assert.match(details, /风险/);
     assert.match(details, /DNSBL/);
     assert.match(details, /暂无|没有|未返回|未提供/);
+    await onlyExpectedTraffic(f);
+  } finally { await f.close(); }
+});
+
+test('network evidence distinguishes multiple origins, RPKI scope and unconfirmed PTRs', async () => {
+  const f = await fixture({width: 393, lookup: ip => ({json: {...report(ip), network: {
+    bgp_prefix: '192.0.2.0/24', bgp_origins: [64501, 64502], rpki: '有效', rpki_prefix: '192.0.2.0/24', rpki_asn: 64502,
+    rdns: ['one.example', 'two.example'], fcrdns_checks: [{name: 'one.example', status: 'mismatch'}, {name: 'two.example', status: 'error'}],
+  }}})});
+  try {
+    await f.page.goto(origin);
+    await settled(f.page, SELF, 85);
+    const panel = await f.page.locator('#network').innerText();
+    for (const label of ['多个起源', 'AS64501', 'AS64502 · 192.0.2.0/24', '回指其他 IP', '查询失败', 'FCrDNS 未确认']) assert.ok(panel.includes(label), label);
+    assert.doesNotMatch(panel, /FCrDNS 未过|劫持/);
+    assert.ok(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    const blacklist = await f.page.locator('#subnetCard').innerText();
+    assert.match(blacklist, /0 \/ 1 命中[\s\S]*1 项未确认/);
     await onlyExpectedTraffic(f);
   } finally { await f.close(); }
 });

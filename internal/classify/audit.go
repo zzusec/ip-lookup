@@ -35,11 +35,13 @@ var leaseBrokers = []struct {
 // DetectLease inspects RDAP / ASN / ISP / NetName strings for commercial IP
 // leasing brokers whose blocks are frequently sub-allocated to proxy/VPS pools.
 func DetectLease(texts ...string) *model.LeaseCheck {
+	hasName := false
 	for _, raw := range texts {
 		low := strings.ToLower(strings.TrimSpace(raw))
 		if low == "" {
 			continue
 		}
+		hasName = true
 		for _, b := range leaseBrokers {
 			if strings.Contains(low, b.match) {
 				return &model.LeaseCheck{
@@ -49,6 +51,9 @@ func DetectLease(texts ...string) *model.LeaseCheck {
 				}
 			}
 		}
+	}
+	if !hasName {
+		return &model.LeaseCheck{Detail: "缺少可核验的注册或运营名称"}
 	}
 	return &model.LeaseCheck{Leased: false, Detail: "未命中已知商业 IP 租赁经纪商"}
 }
@@ -378,12 +383,12 @@ func PopulateThreatAndScenarios(r *model.Result) {
 	f := r.Flags
 	act := a.Activity
 
-	dnsblHits := 0
-	for _, d := range r.DNSBL {
-		if d.Listed {
-			dnsblHits++
-		}
-	}
+	dnsblHits, dnsblChecked := model.SummarizeDNSBL(r.DNSBL)
+	blacklistChecked := dnsblChecked > 0 || (a.Neighbor != nil && a.Neighbor.ListsLoaded > 0)
+	hasReputation := r.Score.DataStatus == "complete" || (r.Score.Coverage != nil && r.Score.Coverage.Received > 0)
+	spamChecked := slices.ContainsFunc(r.Sources, func(source model.Source) bool {
+		return source.Name == "StopForumSpam" && source.Status == "ok" && source.Reputation
+	})
 	abuseLists := 0
 	for _, l := range r.Lists {
 		if l.Category == "abuse" {
@@ -397,12 +402,16 @@ func PopulateThreatAndScenarios(r *model.Result) {
 		a.RiskSummary, a.RiskTone = "发现明显威胁标记", "bad"
 	case f.Proxy || f.VPN || (a.Flow != nil && a.Flow.Masquerade):
 		a.RiskSummary, a.RiskTone = "存在代理或流量伪装特征", "warn"
+	case dnsblHits > 0 || (act != nil && (act.SpamReports > 0 || act.DShieldPackets > 0 || act.DShieldTargets > 0 || act.OTXPulses > 0)):
+		a.RiskSummary, a.RiskTone = "有名单或活动记录", "warn"
 	case f.Leased:
-		a.RiskSummary, a.RiskTone = "未发现恶意威胁（商业租赁网段）", "warn"
+		a.RiskSummary, a.RiskTone = "商业租赁网段", "warn"
+	case !blacklistChecked && !hasReputation:
+		a.RiskSummary, a.RiskTone = "威胁数据不足", "neutral"
 	case f.Hosting || f.CDN:
-		a.RiskSummary, a.RiskTone = "未发现明显恶意威胁（机房段）", "good"
+		a.RiskSummary, a.RiskTone = "已查来源未见明显威胁（机房段）", "good"
 	default:
-		a.RiskSummary, a.RiskTone = "未发现明显威胁", "good"
+		a.RiskSummary, a.RiskTone = "已查来源未见明显威胁", "good"
 	}
 
 	// 2. AbuseLevel
@@ -413,19 +422,27 @@ func PopulateThreatAndScenarios(r *model.Result) {
 	case (act != nil && act.SpamReports > 0) || dnsblHits > 0 || strings.Contains(abuserRaw, "elevated"):
 		a.AbuseLevel, a.AbuseTone = "中等", "warn"
 	case strings.Contains(abuserRaw, "low"):
-		a.AbuseLevel, a.AbuseTone = "纯净（极低滥用）", "good"
+		a.AbuseLevel, a.AbuseTone = "来源报告低滥用", "good"
+	case spamChecked:
+		a.AbuseLevel, a.AbuseTone = "未见垃圾提交记录", "good"
 	default:
-		a.AbuseLevel, a.AbuseTone = "纯净", "good"
+		a.AbuseLevel, a.AbuseTone = "缺少滥用评级", "neutral"
 	}
 
 	// 3. Honeypot / Scanner / DNSBL status
 	switch {
-	case (act != nil && act.DShieldPackets >= 20) || dnsblHits >= 2 || abuseLists > 0:
+	case dnsblHits >= 2:
 		a.HoneypotStatus, a.HoneypotTone = fmt.Sprintf("黑名单命中（DNSBL %d）", dnsblHits), "bad"
-	case (act != nil && act.DShieldPackets > 0) || dnsblHits == 1:
+	case abuseLists > 0:
+		a.HoneypotStatus, a.HoneypotTone = "命中离线滥用名单", "bad"
+	case act != nil && act.DShieldPackets >= 20:
+		a.HoneypotStatus, a.HoneypotTone = "蜜罐有扫描记录", "bad"
+	case (act != nil && (act.DShieldPackets > 0 || act.DShieldTargets > 0)) || dnsblHits == 1:
 		a.HoneypotStatus, a.HoneypotTone = "观测到扫描或单点记录", "warn"
+	case blacklistChecked:
+		a.HoneypotStatus, a.HoneypotTone = "已查名单未命中", "good"
 	default:
-		a.HoneypotStatus, a.HoneypotTone = "纯净", "good"
+		a.HoneypotStatus, a.HoneypotTone = "缺少名单观测", "neutral"
 	}
 
 	if r.Mode == "fast" || r.Score.DataStatus == "unavailable" {

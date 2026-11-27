@@ -94,12 +94,7 @@ func Score(r *model.Result) model.Score {
 			}
 		}
 	}
-	listed := 0
-	for _, d := range r.DNSBL {
-		if d.Listed {
-			listed++
-		}
-	}
+	listed, _ := model.SummarizeDNSBL(r.DNSBL)
 	if listed > 0 {
 		add(fmt.Sprintf("DNSBL 命中 %d 个", listed), -min(listed*5, 20))
 	}

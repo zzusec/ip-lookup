@@ -3,21 +3,21 @@ package model
 
 // Result is the full report for one IP address.
 type Result struct {
-	IP         string      `json:"ip"`
-	Version    int         `json:"version"`
-	Bogon      string      `json:"bogon,omitempty"`
-	Mode       string      `json:"mode"`
-	QueriedAt  string      `json:"queried_at"`
-	ElapsedMs  int64       `json:"elapsed_ms"`
-	Verdict    Verdict     `json:"verdict"`
-	Score      Score       `json:"score"`
-	Flags      Flags       `json:"flags"`
-	Native     Native      `json:"native"`
-	Geo        Geo         `json:"geo"`
-	Network    Network     `json:"network"`
-	GeoSources []GeoSource `json:"geo_sources"`
-	Lists      []ListHit   `json:"lists"`
-	DNSBL      []DNSBL     `json:"dnsbl"`
+	IP         string        `json:"ip"`
+	Version    int           `json:"version"`
+	Bogon      string        `json:"bogon,omitempty"`
+	Mode       string        `json:"mode"`
+	QueriedAt  string        `json:"queried_at"`
+	ElapsedMs  int64         `json:"elapsed_ms"`
+	Verdict    Verdict       `json:"verdict"`
+	Score      Score         `json:"score"`
+	Flags      Flags         `json:"flags"`
+	Native     Native        `json:"native"`
+	Geo        Geo           `json:"geo"`
+	Network    Network       `json:"network"`
+	GeoSources []GeoSource   `json:"geo_sources"`
+	Lists      []ListHit     `json:"lists"`
+	DNSBL      []DNSBL       `json:"dnsbl"`
 	Risk       []Risk        `json:"risk"`
 	Ports      *Ports        `json:"ports,omitempty"`
 	Traffic    *Traffic      `json:"traffic,omitempty"`
@@ -119,35 +119,41 @@ type Geo struct {
 }
 
 type Network struct {
-	ASN          int        `json:"asn,omitempty"`
-	ASName       string     `json:"as_name,omitempty"`
-	ASDomain     string     `json:"as_domain,omitempty"`
-	ASCountry    string     `json:"as_country,omitempty"`
-	ASClass      string     `json:"as_class,omitempty"`
-	ASTypeLabel  string     `json:"as_type_label,omitempty"`
-	ASTags       []string   `json:"as_tags,omitempty"`
-	ASIPv4Count  int        `json:"as_ipv4_count,omitempty"`
-	ASPrefixesV4 int        `json:"as_prefixes_v4,omitempty"`
-	ASPrefixesV6 int        `json:"as_prefixes_v6,omitempty"`
-	ASCreated    string     `json:"as_created,omitempty"`
-	Org          string     `json:"org,omitempty"`
-	Registrant   string     `json:"registrant,omitempty"`
-	ISP          string     `json:"isp,omitempty"`
-	AbuserScore  string     `json:"abuser_score,omitempty"`
-	Prefix       string     `json:"prefix,omitempty"`
-	BGPPrefix    string     `json:"bgp_prefix,omitempty"`
-	NetName      string     `json:"net_name,omitempty"`
-	NetRange     string     `json:"net_range,omitempty"`
-	Registry     string     `json:"registry,omitempty"`
-	Allocated    string     `json:"allocated,omitempty"`
-	RDNS         []string   `json:"rdns,omitempty"`
-	FCrDNS       *bool      `json:"fcrdns,omitempty"` // nil when rDNS came from a provider and was not verified
-	UsageType    string     `json:"usage_type,omitempty"`
-	RPKI         string     `json:"rpki,omitempty"`
-	Visibility   string     `json:"visibility,omitempty"`
-	Abuse        string     `json:"abuse,omitempty"`
-	Domains      []string   `json:"domains,omitempty"`
-	PeeringDB    *PeeringDB `json:"peeringdb,omitempty"`
+	ASN          int      `json:"asn,omitempty"`
+	ASName       string   `json:"as_name,omitempty"`
+	ASDomain     string   `json:"as_domain,omitempty"`
+	ASCountry    string   `json:"as_country,omitempty"`
+	ASClass      string   `json:"as_class,omitempty"`
+	ASTypeLabel  string   `json:"as_type_label,omitempty"`
+	ASTags       []string `json:"as_tags,omitempty"`
+	ASIPv4Count  int      `json:"as_ipv4_count,omitempty"`
+	ASPrefixesV4 int      `json:"as_prefixes_v4,omitempty"`
+	ASPrefixesV6 int      `json:"as_prefixes_v6,omitempty"`
+	ASCreated    string   `json:"as_created,omitempty"`
+	Org          string   `json:"org,omitempty"`
+	Registrant   string   `json:"registrant,omitempty"`
+	ISP          string   `json:"isp,omitempty"`
+	AbuserScore  string   `json:"abuser_score,omitempty"`
+	Prefix       string   `json:"prefix,omitempty"`
+	BGPPrefix    string   `json:"bgp_prefix,omitempty"`
+	BGPOrigins   []uint32 `json:"bgp_origins,omitempty"`
+	RPKIASN      int      `json:"rpki_asn,omitempty"`
+	RPKIPrefix   string   `json:"rpki_prefix,omitempty"`
+	NetName      string   `json:"net_name,omitempty"`
+	NetRange     string   `json:"net_range,omitempty"`
+	Registry     string   `json:"registry,omitempty"`
+	Allocated    string   `json:"allocated,omitempty"`
+
+	RDNS         []string      `json:"rdns,omitempty"`
+	FCrDNS       *bool         `json:"fcrdns,omitempty"`
+	FCrDNSChecks []FCrDNSCheck `json:"fcrdns_checks,omitempty"`
+
+	UsageType  string     `json:"usage_type,omitempty"`
+	RPKI       string     `json:"rpki,omitempty"`
+	Visibility string     `json:"visibility,omitempty"`
+	Abuse      string     `json:"abuse,omitempty"`
+	Domains    []string   `json:"domains,omitempty"`
+	PeeringDB  *PeeringDB `json:"peeringdb,omitempty"`
 }
 
 type PeeringDB struct {

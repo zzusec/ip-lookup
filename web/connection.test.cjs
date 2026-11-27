@@ -246,7 +246,7 @@ test('WebRTC separates public, private and mDNS candidates and closes on complet
     createDataChannel() {}
     createOffer() { return Promise.resolve({}); }
     setLocalDescription() {
-      for (const address of ['8.8.8.8', '192.168.1.2', 'abc.local', '8.8.8.8']) this.onicecandidate({candidate: {address}});
+      for (const address of ['8.8.8.8', '192.168.1.2', 'abc.local', '8.8.8.8']) this.onicecandidate({candidate: {address, type: 'srflx'}});
       this.onicecandidate({candidate: null});
       return Promise.resolve();
     }
@@ -267,6 +267,25 @@ test('WebRTC offer errors are exposed instead of becoming an empty successful re
   assert.equal(rtc.status, 'error');
   assert.match(rtc.error, /offer denied/);
   assert.equal(closed, 1);
+});
+
+test('host, relay and untyped global ICE candidates are not STUN observations', async () => {
+  class RTC {
+    createDataChannel() {}
+    createOffer() { return Promise.resolve({}); }
+    setLocalDescription() {
+      for (const type of ['host', 'relay', '']) this.onicecandidate({candidate: {address: '8.8.8.8', type}});
+      this.onicecandidate({candidate: {candidate: 'candidate:1 1 UDP 1 1.1.1.1 5678 typ srflx'}});
+      this.onicecandidate({candidate: null});
+      return Promise.resolve();
+    }
+    close() {}
+  }
+  const result = await load({RTCPeerConnection: RTC, fetch: fixtureFetch()}).collect();
+  const rtc = result.probes.find(p => p.id === 'rtc');
+  assert.deepEqual(plain(rtc.data.publicIPs), ['1.1.1.1']);
+  assert.equal(rtc.data.otherPublicCandidate, true);
+  assert.ok(!ids(api.analyze(result)).includes('rtc-different-v4'));
 });
 
 test('bare ECS addresses remain prefix-unknown while malformed ECS leaves the valid resolver visible', async () => {
@@ -297,7 +316,7 @@ test('WebRTC time limit preserves partial candidates and explicitly marks the ob
   class RTC {
     createDataChannel() {}
     createOffer() { return Promise.resolve({}); }
-    setLocalDescription() { this.onicecandidate({candidate: {address: '8.8.8.8'}}); return Promise.resolve(); }
+    setLocalDescription() { this.onicecandidate({candidate: {address: '8.8.8.8', type: 'srflx'}}); return Promise.resolve(); }
     close() { closed++; }
   }
   const module = load({RTCPeerConnection: RTC, fetch: fixtureFetch(), setTimeout: fn => setTimeout(fn, 2)});

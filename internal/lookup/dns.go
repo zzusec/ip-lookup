@@ -2,6 +2,9 @@ package lookup
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net"
 	"net/netip"
 	"sync"
 	"time"
@@ -17,7 +20,8 @@ func dnsCheck(ctx context.Context, name string, f func() (string, error)) model.
 	st := model.Source{Name: name, Kind: "dns", Status: status, Ms: time.Since(start).Milliseconds()}
 	if err != nil {
 		st.Status, st.Error = "error", err.Error()
-		if ctx.Err() != nil {
+		var netErr net.Error
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {
 			st.Status = "timeout"
 		}
 	}
@@ -40,23 +44,25 @@ func (s *Service) dnsChecks(ctx context.Context, o *sources.Out, a netip.Addr) [
 		}()
 	}
 	run("反向解析 (PTR)", func() (string, error) {
-		names, fc, err := s.DNS.Reverse(ctx, a)
-		if err != nil || len(names) == 0 {
+		checks, fc, err := s.DNS.Reverse(ctx, a)
+		if len(checks) == 0 {
 			return "empty", err
 		}
-		o.Do(func(r *model.Result) { r.Network.RDNS, r.Network.FCrDNS = names, &fc })
-		return "ok", nil
+		names := make([]string, len(checks))
+		for i, check := range checks {
+			names[i] = check.Name
+		}
+		o.Do(func(r *model.Result) { r.Network.RDNS, r.Network.FCrDNS, r.Network.FCrDNSChecks = names, fc, checks })
+		return "ok", err
 	})
 	if a.Is4() {
 		run("DNSBL", func() (string, error) {
 			res := s.DNS.DNSBL(ctx, a)
-			listed := 0
-			for _, d := range res {
-				if d.Listed {
-					listed++
-				}
-			}
 			o.Do(func(r *model.Result) { r.DNSBL = res })
+			listed, checked := model.SummarizeDNSBL(res)
+			if checked == 0 {
+				return "error", fmt.Errorf("DNSBL：%d 个查询均未取得有效回答", len(res))
+			}
 			if listed > 0 {
 				o.Signal("abuser", "DNSBL", itoa(listed)+" 个黑名单命中", min(30+10*listed, 70))
 			}
@@ -71,7 +77,7 @@ func (s *Service) dnsChecks(ctx context.Context, o *sources.Out, a netip.Addr) [
 func (s *Service) cymru(ctx context.Context, o *sources.Out, a netip.Addr) model.Source {
 	return dnsCheck(ctx, "Team Cymru", func() (string, error) {
 		c, err := s.DNS.Cymru(ctx, a)
-		if err != nil {
+		if err != nil || c.ASN == 0 {
 			return "empty", err
 		}
 		o.Hint("bgp_prefix:cymru", c.Prefix)

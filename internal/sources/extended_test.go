@@ -6,11 +6,65 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/zzusec/ip-lookup/internal/model"
 )
+
+func TestRoutingStatusReportsOnlyExactOrigins(t *testing.T) {
+	query := Query{Addr: netip.MustParseAddr("2001:db8::123")}
+	for _, tc := range []struct {
+		name, origins string
+		want          []uint32
+		asn           int
+	}{
+		{"multiple", `[{"origin":64502},{"origin":64501},{"origin":64502}]`, []uint32{64501, 64502}, 0},
+		{"single", `[{"origin":64502}]`, []uint32{64502}, 64502},
+		{"not observed", `[]`, nil, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := &Out{Res: &model.Result{}}
+			raw := `{"data":{"resource":"2001:db8::/48","visibility":{"v6":{"ris_peers_seeing":8,"total_ris_peers":9}},"origins":` + tc.origins + `,"less_specifics":[{"origin":64500}]}}`
+			if err := ripeRouting().Apply(out, query, []byte(raw)); err != nil {
+				t.Fatal(err)
+			}
+			network := out.Res.Network
+			if !slices.Equal(network.BGPOrigins, tc.want) || network.ASN != tc.asn || network.BGPPrefix != "2001:db8::/48" || len(out.Sig) != 0 {
+				t.Fatalf("unexpected route evidence: %+v, signals %+v", network, out.Sig)
+			}
+			if (out.Hints()["origin_asn:ripe"] != "") != (tc.asn > 0) {
+				t.Fatalf("arbitrary or missing origin: %+v", out.Hints())
+			}
+		})
+	}
+	out := &Out{Res: &model.Result{}}
+	wrong := []byte(`{"data":{"resource":"2001:db8:55::/48","visibility":{"v6":{"total_ris_peers":3}},"origins":[{"origin":64502}]}}`)
+	if err := ripeRouting().Apply(out, query, wrong); err == nil || out.Res.Network.BGPPrefix != "" {
+		t.Fatal("an unrelated prefix was reported for the query")
+	}
+}
+
+func TestTelemetryDistinguishesZeroFromMissing(t *testing.T) {
+	query := Query{Addr: netip.MustParseAddr("192.0.2.1")}
+	for _, raw := range []string{`{"success":1,"ip":{}}`, `{"success":1,"ip":{"appears":1}}`} {
+		out := &Out{Res: &model.Result{}}
+		if err := stopForumSpam().Apply(out, query, []byte(raw)); err == nil || len(out.Hints()) != 0 {
+			t.Fatal("incomplete telemetry became a negative spam observation")
+		}
+	}
+	for _, raw := range []string{`{"ip":{"number":"192.0.2.1","assize":42}}`, `{"ip":{"number":"192.0.2.1","count":0}}`} {
+		out := &Out{Res: &model.Result{}}
+		if err := sansDShield().Apply(out, query, []byte(raw)); err != nil {
+			t.Fatal(err)
+		}
+		gotCount := out.Res.Audit != nil && out.Res.Audit.Activity != nil && out.Res.Audit.Activity.DShieldCountKnown
+		if gotCount != strings.Contains(raw, `"count"`) {
+			t.Fatalf("wrong observation for %s", raw)
+		}
+	}
+}
 
 func TestExtendedProvidersAndReputation(t *testing.T) {
 	addr := netip.MustParseAddr("203.0.113.10")

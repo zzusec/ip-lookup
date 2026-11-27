@@ -54,6 +54,29 @@ func TestDetectLeaseAndAuditFlow(t *testing.T) {
 	}
 }
 
+func TestThreatBadgesRequireRelevantEvidence(t *testing.T) {
+	for _, test := range []struct {
+		name, risk, abuse, blacklist string
+		result                       model.Result
+	}{
+		{"all unavailable", "neutral", "neutral", "neutral", model.Result{DNSBL: []model.DNSBL{{Error: "timeout"}}, Score: model.Score{DataStatus: "unavailable"}}},
+		{"hosting alone is not a clean check", "neutral", "neutral", "neutral", model.Result{Flags: model.Flags{Hosting: true}, Score: model.Score{DataStatus: "limited"}}},
+		{"negative DNSBL only covers the consulted list", "good", "neutral", "good", model.Result{DNSBL: []model.DNSBL{{Zone: "negative.test"}, {Error: "timeout"}}}},
+		{"one positive survives other errors", "warn", "warn", "warn", model.Result{DNSBL: []model.DNSBL{{Listed: true}, {Error: "timeout"}}}},
+		{"offline positive survives online failure", "bad", "neutral", "bad", model.Result{Lists: []model.ListHit{{Category: "abuse"}}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := test.result
+			result.Audit = &model.NetworkAudit{}
+			PopulateThreatAndScenarios(&result)
+			audit := result.Audit
+			if audit.RiskTone != test.risk || audit.AbuseTone != test.abuse || audit.HoneypotTone != test.blacklist {
+				t.Fatalf("unexpected evidence classification: %+v", audit)
+			}
+		})
+	}
+}
+
 func TestBuildTrafficModes(t *testing.T) {
 	devDesk, devMob := 62.5, 37.5
 	radarIn := &model.Traffic{

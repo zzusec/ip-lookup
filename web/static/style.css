@@ -98,10 +98,11 @@ main.wrap{padding-top:18px;padding-bottom:12px}
 
 /* Purity Score Ring Card in Right Column */
 .score{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;padding:14px 16px;border-radius:10px;background:var(--soft);border:1px solid var(--line);width:100%;text-align:center}
-.score-meta{display:flex;flex-direction:column;align-items:center;gap:5px;min-width:0}
+.score-meta{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0;width:100%}
 .score-line{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;font-size:12.5px;color:var(--mut)}
 .score-line b{font-weight:600;color:var(--ink)}
-.score-data{font-size:12px;color:var(--mut);line-height:1.35;overflow-wrap:anywhere}
+.score-data{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:2px 5px;font-size:11.5px;color:var(--mut);line-height:1.35}
+.score-data .sd-item{white-space:nowrap}
 .ring{--ring-c:var(--acc);position:relative;width:112px;height:112px;flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .ring[data-tone=excellent]{--ring-c:var(--c-excellent)}
 .ring[data-tone=good]{--ring-c:var(--c-good)}
@@ -294,6 +295,8 @@ main.wrap{padding-top:18px;padding-bottom:12px}
   .verdict-side>.score{grid-area:score;flex:none;gap:6px;padding:0;background:transparent;border:0}
   .verdict-side>.verdict-traffic{grid-area:vtraffic}
   .score-meta{align-items:center;text-align:center}
+  .score-data{flex-direction:column;gap:1px}
+  .score-data .sd-sep{display:none}
   .search{flex-basis:100%;max-width:none}
   .v-label{font-size:24px}
   .verdict .kv{grid-template-columns:max-content minmax(0,1fr)}

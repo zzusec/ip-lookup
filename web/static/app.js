@@ -354,9 +354,8 @@ function scoreBox(r, state) {
   const level = waiting ? '评估中…' : state === 'error' || unavailable ? '未能评估'
     : state === 'bogon' ? '不适用' : tier.level;
   const coverage = s.coverage;
-  const coverageText = coverage && Number.isInteger(coverage.received) && Number.isInteger(coverage.total)
-    && coverage.received >= 0 && coverage.total > 0 && coverage.received <= coverage.total
-    ? ` · ${coverage.received}/${coverage.total} 信誉源` : '';
+  const hasCoverage = coverage && Number.isInteger(coverage.received) && Number.isInteger(coverage.total)
+    && coverage.received >= 0 && coverage.total > 0 && coverage.received <= coverage.total;
   const quality = {complete: '数据较充分', limited: '数据有限', unavailable: '数据不足'}[s.data_status];
   return h('div', {id: 'score', class: 'score', 'aria-live': 'polite'},
     h('div', {class: unknown ? 'ring wait' : 'ring', 'data-tone': unknown ? null : tier.tone,
@@ -365,8 +364,11 @@ function scoreBox(r, state) {
       h('b', {id: 'scoreValue'}, unknown ? '—' : String(v)), h('span', {id: 'scoreLevel'}, level)),
     h('div', {class: 'score-meta'},
       h('div', {class: 'score-line'},
-        h('span', {class: 'mut'}, '纯净度 ', h('span', {id: 'scoreTotal', hidden: state === 'bogon'}, '/100')),
-        !state && quality ? h('span', {class: 'score-data', title: '只统计实际返回安全字段或风险读数的信誉源；数据返回不代表安全保证。'}, '· ' + quality + coverageText) : null),
+        h('span', {class: 'mut'}, '纯净度 ', h('span', {id: 'scoreTotal', hidden: state === 'bogon'}, '/100'))),
+      !state && quality ? h('div', {class: 'score-data', title: '只统计实际返回安全字段或风险读数的信誉源；数据返回不代表安全保证。'},
+        h('span', {class: 'sd-item'}, quality),
+        hasCoverage ? h('span', {class: 'sd-sep', 'aria-hidden': 'true'}, '·') : null,
+        hasCoverage ? h('span', {class: 'sd-item'}, `${coverage.received}/${coverage.total} 信誉源`) : null) : null,
       h('button', {id: 'scoreDetailsToggle', type: 'button', class: 'btn score-details-toggle', disabled: state === 'pending' || !r.mode,
         'aria-haspopup': 'dialog', 'aria-controls': 'scoreDetails', onclick: e => showScoreDetails(r, e.currentTarget)}, '评分详情')));
 }

@@ -12,7 +12,7 @@ import (
 func scoreCoverage(r *model.Result, hasDeductions bool) (string, *model.ScoreCoverage) {
 	expected, received := map[string]bool{}, map[string]bool{}
 	for _, source := range r.Sources {
-		if source.ReputationSource {
+		if source.ReputationSource && source.Status != "skipped" {
 			expected[source.Name] = true
 		}
 		if source.Reputation && source.Status == "ok" {
@@ -34,7 +34,7 @@ func scoreCoverage(r *model.Result, hasDeductions bool) (string, *model.ScoreCov
 	if c.Received == 0 && !hasDeductions {
 		return "unavailable", c
 	}
-	if c.Received >= 2 && c.Received == c.Total && r.Mode != "fast" {
+	if r.Mode != "fast" && c.Received >= 2 && (c.Received == c.Total || (c.Received >= 5 && c.Received*10 >= c.Total*6)) {
 		return "complete", c
 	}
 	return "limited", c

@@ -42,6 +42,12 @@ func TestReputationCoverage(t *testing.T) {
 		{"fast response cannot be complete", model.Result{Mode: "fast", Sources: []model.Source{
 			provider("ip-api.com", "ok", true), provider("ipapi.is", "ok", true),
 		}}, "limited", 2, 2, 100},
+		{"seven of ten reputation providers with optional skipped sources is complete", model.Result{Mode: "full", Sources: []model.Source{
+			provider("s1", "ok", true), provider("s2", "ok", true), provider("s3", "ok", true),
+			provider("s4", "ok", true), provider("s5", "ok", true), provider("s6", "ok", true),
+			provider("s7", "ok", true), provider("s8", "empty", false), provider("s9", "quota", false),
+			provider("s10", "skipped", false),
+		}}, "complete", 7, 9, 100},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			s := Score(&c.result)

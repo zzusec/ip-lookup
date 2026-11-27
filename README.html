@@ -81,6 +81,7 @@ curl ip.example.com/json/8.8.8.8 # 完整 JSON
 <p>查询别人的 IP 时，每个客户端（IPv6 按 /64 计）每分钟最多 20 次 full 查询。查询自己不受这个限制。</p>
 <h2>部署</h2>
 <h3>独立管理后台</h3>
+<p>仓库附有 <a href="./deploy/admin.conf.example">ip-lookup.service 后台配置示例</a>。将 root 专属口令保存到 <code>/etc/ip-lookup-admin/admin.password</code>（0600），将示例安装为 <code>/etc/systemd/system/ip-lookup.service.d/40-independent-admin.conf</code>，执行 <code>systemctl daemon-reload</code> 后重启。它在私有运行目录生成 0400 副本，可兼容以 ACL 和 0440 传递凭据的 systemd。使用此方式时不要在 <code>/etc/ip-lookup.env</code> 再设置 <code>IP_ADMIN_PASSWORD_FILE</code>，空值也会覆盖单元配置。</p>
 <p>将 <code>IP_ADMIN_PASSWORD_FILE</code> 指向只有服务可读的口令文件（可用 systemd <code>LoadCredential</code>）。重启后通过 HTTPS 打开 <code>/admin</code>。使用密码管理器或 <code>openssl rand -hex 32</code> 独立生成口令，不与其他站点共用，不放入 URL、仓库或命令行参数。未配置时不启动后台，也不采集后台统计；轮换时替换文件并重启服务。</p>
 <p>后台显示今日、近 7 天、近 30 天的页面访问、成功查询及错误请求，以及本服务的数据集和在线来源状态。按 UTC+8 自然日计数。成功的 HTML 请求计一次访问，快速与完整 API 分别计查询请求，不是独立访客。仅将匿名计数保存至 <code>DATA_DIR/site-usage.json</code>，不保存访客 IP、查询目标或浏览器标识。首次启用前不补算；管理、健康检查和静态资源不计入流量。后台不读取或同步 WhoProbe 数据。</p>
 <p>需要 Go 1.27 以上。离线数据约 330MB，放在 <code>DATA_DIR</code> 里，运行时内存大约 50 到 150MB。</p>

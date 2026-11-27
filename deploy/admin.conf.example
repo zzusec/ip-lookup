@@ -1,0 +1,6 @@
+[Service]
+LoadCredential=admin_password:/etc/ip-lookup-admin/admin.password
+RuntimeDirectory=ip-lookup-admin
+RuntimeDirectoryMode=0700
+ExecStartPre=/usr/bin/install -m 0400 /run/credentials/ip-lookup.service/admin_password /run/ip-lookup-admin/admin.password
+Environment=IP_ADMIN_PASSWORD_FILE=/run/ip-lookup-admin/admin.password

@@ -203,8 +203,8 @@ test('stealth ?k= gate, sidebar navigation, drawer details, token rotation and l
   assert.match(rows[0], /今日.*1.*1.*5.*2.*1.*0/);
   assert.match(rows[2], /近 30 天.*21.*34.*107.*15.*6.*8/);
 
-  // Navigate to Live Visits and open right detail drawer
-  await page.locator('#sideNav .nav-item[data-view="visits"]').click();
+  // Navigate to Live Visits and open IP dossier dialog
+  await page.locator('#topNav .tab[data-view="visits"]').click();
   await page.getByText('119.234.40.14').first().waitFor();
   await page.getByText('iOS 27.2 · Safari 27.2').waitFor();
   await page.locator('#visitsTable tbody tr').first().click();
@@ -212,7 +212,7 @@ test('stealth ?k= gate, sidebar navigation, drawer details, token rotation and l
   await page.locator('#drawerClose').click();
 
   // Navigate to Analytics (SVG chart + 30d details)
-  await page.locator('#sideNav .nav-item[data-view="analytics"]').click();
+  await page.locator('#topNav .tab[data-view="analytics"]').click();
   await page.locator('#plot').waitFor();
   await page.locator('#anaSpan').selectOption('30');
   await page.getByText('查看每日数值').click();
@@ -220,14 +220,14 @@ test('stealth ?k= gate, sidebar navigation, drawer details, token rotation and l
   assert.match(await page.locator('#dayRows tr').last().textContent(), /未采集/);
 
   // Navigate to Sources & Quotas (no XSS img execution)
-  await page.locator('#sideNav .nav-item[data-view="sources"]').click();
+  await page.locator('#topNav .tab[data-view="sources"]').click();
   assert.match(await page.locator('#online').innerText(), /限流[\s\S]*100\/day · 已用 42[\s\S]*42%/);
   assert.match(await page.locator('#datasets').innerText(), /错误.*无法解包/);
   assert.equal(await page.locator('#datasets img').count(), 0);
 
   // Navigate to Security and rotate ?k= URL token
   page.once('dialog', d => d.accept());
-  await page.locator('#sideNav .nav-item[data-view="security"]').click();
+  await page.locator('#topNav .tab[data-view="security"]').click();
   await page.locator('#secTokPw').fill('test-password');
   await page.locator('[data-action="rotate-token"]').click();
   await page.getByText(new RegExp(state.rotatedKey)).first().waitFor();
@@ -257,13 +257,11 @@ test('mobile 393px viewport, zero horizontal overflow, malformed data, retry and
   const noOverflow = () => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
   assert.ok(await noOverflow());
 
-  await page.locator('#menuBtn').click();
-  await page.locator('#sideNav .nav-item[data-view="visits"]').click();
+  await page.locator('#topNav .tab[data-view="visits"]').click();
   await page.getByText('119.234.40.14').first().waitFor();
   assert.ok(await noOverflow());
 
-  await page.locator('#menuBtn').click();
-  await page.locator('#sideNav .nav-item[data-view="dashboard"]').click();
+  await page.locator('#topNav .tab[data-view="dashboard"]').click();
 
   state.overviewStatus = 500;
   await page.locator('#refreshBtn').click();

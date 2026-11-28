@@ -5,81 +5,97 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="robots" content="noindex,nofollow">
   <meta name="referrer" content="no-referrer">
-  <title>IP 查询站 · 运营后台</title>
+  <meta name="color-scheme" content="light dark">
+  <title>节点控制台 · IP 查询站</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/admin.css">
   <script src="/static/admin.js" defer></script>
 </head>
 <body>
-  <div id="loginPage" class="login-page" hidden>
-    <div class="login-card">
-      <h1>IP 查询站 · 运营后台</h1>
-      <p>请登录管理员账号</p>
-      <form id="loginForm" method="post" action="/admin/api/login">
-        <input id="u" name="username" aria-label="管理员账号" placeholder="账号" autocomplete="username" value="admin" required>
-        <input id="p" name="password" aria-label="管理密码" type="password" placeholder="密码" autocomplete="current-password" required>
-        <button type="submit" id="submitLogin" class="btn-primary">登 录</button>
-        <div id="loginErr" class="err" role="alert" aria-live="polite"></div>
-      </form>
-    </div>
-    <div class="login-foot">IP 类型与信誉查询 · 独立管理后台</div>
-  </div>
-
-  <div id="bootNotice" class="boot-notice" role="status" aria-live="polite">
-    <span id="notice">正在核对管理会话…</span>
-    <button id="retry" type="button" class="btn-ghost btn-sm" hidden>重试</button>
-  </div>
-
-  <div id="app" class="layout" hidden>
-    <aside class="sidebar" id="sidebar">
-      <div class="brand"><span class="dot">IP</span> <span id="brandText">运营后台</span></div>
-      <div class="brand-role"><span class="role-badge master" id="roleBadge">主节点 · 在线</span></div>
-      <nav class="nav" id="sideNav" aria-label="后台导航">
-        <div class="nav-item active" data-view="dashboard" tabindex="0" role="button"><span class="ic">📊</span><span class="nav-label">仪表盘</span></div>
-        <div class="nav-item" data-view="visits" tabindex="0" role="button"><span class="ic">📋</span><span class="nav-label">实时访问</span></div>
-        <div class="nav-item" data-view="analytics" tabindex="0" role="button"><span class="ic">📈</span><span class="nav-label">数据分析</span></div>
-        <div class="nav-item" data-view="sources" tabindex="0" role="button"><span class="ic">📡</span><span class="nav-label">数据源与配额</span><span class="nav-badge" id="sourcesNavBadge"></span></div>
-        <div class="nav-item" data-view="security" tabindex="0" role="button"><span class="ic">🔐</span><span class="nav-label">账号安全</span><span class="nav-badge" id="secNavBadge"></span></div>
-        <button type="button" class="nav-item sidebar-logout" id="sidebarLogout"><span class="ic" aria-hidden="true">⇥</span>退出登录</button>
-      </nav>
-      <div class="foot" id="appFoot">
-        IP 查询站 · <span id="footHost">在线</span><br>
-        <a href="/" target="_blank" rel="noreferrer" class="foot-link">打开前台查询页 ↗</a>
-      </div>
-    </aside>
-    <div id="navMask" class="nav-mask"></div>
-
-    <div class="main">
-      <header class="topbar">
-        <h2 id="pageTitle">
-          <button type="button" class="menu-btn" id="menuBtn" title="菜单" aria-label="打开导航菜单">☰</button>
-          <button type="button" class="back-btn" id="backBtn" hidden>‹ 返回</button>
-          <span id="pageTitleText">仪表盘</span>
-        </h2>
-        <div class="who">
-          <label class="auto-refresh" id="autoRefreshLabel" title="每 10 秒自动刷新当前页数据">
-            <input type="checkbox" id="autoRefreshChk">
-            <span><span id="arSec">10s</span><span class="ar-txt"> 自动刷新</span></span>
-          </label>
-          <button type="button" class="btn-ghost btn-sm" id="refreshBtn" title="刷新当前页面数据（保留筛选条件）"><span class="ic-refresh">⟳</span><span class="refresh-txt">刷新</span></button>
-          <span class="refreshed-at" id="refreshedAt" title="上次成功拉到数据的时间"></span>
-          <button type="button" class="btn-ghost btn-sm topbar-logout" id="logout">退出</button>
+  <section id="loginPage" class="auth-shell" hidden aria-labelledby="loginTitle">
+    <div class="auth-panel">
+      <div class="auth-head">
+        <img src="/static/favicon.svg" width="28" height="28" alt="">
+        <div>
+          <h1 id="loginTitle">节点运行与遥测控制台</h1>
+          <p>验证管理员凭据以读取实时流量与数据源状态</p>
         </div>
-      </header>
-      <div id="inlineBanner" class="inline-banner" hidden role="status" aria-live="polite"></div>
-      <main id="view" class="view"></main>
+      </div>
+      <form id="loginForm" method="post" action="/admin/api/login">
+        <label class="field">
+          <span>管理员账号</span>
+          <input id="u" name="username" aria-label="管理员账号" autocomplete="username" value="admin" required>
+        </label>
+        <label class="field">
+          <span>管理密码</span>
+          <input id="p" name="password" aria-label="管理密码" type="password" autocomplete="current-password" placeholder="输入口令" required>
+        </label>
+        <button type="submit" id="submitLogin" class="btn primary full">进入控制台</button>
+        <div id="loginErr" class="auth-err" role="alert" aria-live="polite"></div>
+      </form>
+      <div class="auth-meta">
+        <span class="mono" id="loginHost">IP Lookup</span>
+        <a href="/" target="_blank" rel="noreferrer">返回公开查询页</a>
+      </div>
     </div>
+  </section>
+
+  <div id="bootNotice" class="boot-state" role="status" aria-live="polite">
+    <span id="notice">正在连接节点控制台…</span>
+    <button id="retry" type="button" class="btn" hidden>重试</button>
   </div>
 
-  <div id="mask" class="mask"></div>
-  <aside id="drawer" class="drawer" aria-labelledby="dName">
-    <div class="drawer-head">
-      <div class="name" id="dName">访客与 IP 详情</div>
-      <button type="button" class="x" id="drawerClose" aria-label="关闭详情">✕</button>
-    </div>
-    <div class="drawer-body" id="dBody"></div>
-  </aside>
+  <div id="app" class="console" hidden>
+    <header class="masthead">
+      <div class="wrap mast-row">
+        <div class="mast-brand">
+          <a href="/" target="_blank" rel="noreferrer" class="brand-mark" title="打开公开查询首页">
+            <img src="/static/favicon.svg" width="24" height="24" alt="">
+            <span>IP 查询站</span>
+          </a>
+          <span class="mast-sep">/</span>
+          <span class="mast-title">节点控制台</span>
+          <span class="status-pill ok" id="roleBadge">运行正常</span>
+        </div>
 
-  <noscript>此后台需要 JavaScript 才能登录和读取统计。</noscript>
+        <nav class="tab-bar" id="topNav" aria-label="控制台分区">
+          <button type="button" class="tab active" data-view="dashboard">概览</button>
+          <button type="button" class="tab" data-view="visits">实时流量</button>
+          <button type="button" class="tab" data-view="analytics">趋势分布</button>
+          <button type="button" class="tab" data-view="sources">情报源<span class="tab-dot" id="sourcesNavBadge" hidden></span></button>
+          <button type="button" class="tab" data-view="security">安全访问<span class="tab-dot" id="secNavBadge" hidden></span></button>
+        </nav>
+
+        <div class="mast-ops">
+          <span class="stamp mono" id="refreshedAt"></span>
+          <label class="pulse-toggle" id="autoRefreshLabel" title="每 10 秒自动同步当前视图">
+            <input type="checkbox" id="autoRefreshChk">
+            <span class="mono" id="arSec">10s</span>
+          </label>
+          <button type="button" class="btn sm" id="refreshBtn">刷新</button>
+          <button type="button" class="btn sm quiet" id="logout">退出</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="wrap deck">
+      <div id="inlineBanner" class="banner" hidden role="status" aria-live="polite"></div>
+      <div id="subBar" class="sub-bar" hidden>
+        <button type="button" class="btn sm" id="backBtn">返回上一视图</button>
+        <span class="mut" id="subCrumb"></span>
+      </div>
+      <div id="view"></div>
+    </main>
+  </div>
+
+  <dialog id="ipDialog" class="ip-dialog" aria-labelledby="dName">
+    <div class="dlg-head">
+      <h2 id="dName" class="mono">IP 详情</h2>
+      <button type="button" class="btn sm" id="drawerClose" aria-label="关闭详情">关闭</button>
+    </div>
+    <div id="dBody" class="dlg-body"></div>
+  </dialog>
+
+  <noscript>此控制台需要启用 JavaScript。</noscript>
 </body>
 </html>

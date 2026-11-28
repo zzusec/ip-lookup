@@ -81,11 +81,11 @@ Go 在首屏直接输出 IP，不等待在线评分，页面响应使用 `Cache-
 
 ## 独立管理后台
 
-在服务配置中将 `IP_ADMIN_PASSWORD_FILE` 指向只有服务可读的口令文件（可用 systemd `LoadCredential`），重启后通过 HTTPS 打开 `/admin`。口令使用密码管理器或 `openssl rand -hex 32` 单独生成，不与其他站点共用，不放入 URL、仓库或命令行参数。未配置时不启动后台，也不采集后台访问统计。轮换口令需要替换文件并重启服务。
+在服务配置中将 `IP_ADMIN_PASSWORD_FILE` 指向只有服务可读的凭据文件（可用 systemd `LoadCredential`）。凭据文件支持三行键值格式（`gate_key: <随机令牌>`、`username: admin`、`password: <登录口令>`）或兼容单行随机长口令。配置 `gate_key` 后启用两层隐身防护：未携带正确 `?k=<gate_key>` 访问 `/admin` 直接返回 `404`，携带有效 `?k=` 解锁后展示管理员账号与密码登录页；登录后可在「账号安全」页直接在线修改密码、一键轮换 `?k=` 访问链接或解除防爆破封锁（持久化至 `DATA_DIR/admin-auth.json`）。未配置 `IP_ADMIN_PASSWORD_FILE` 时不启动后台，也不采集后台统计。
 
-使用仓库提供的 `ip-lookup.service` 时，将 root 专属口令保存到 `/etc/ip-lookup-admin/admin.password`（`0600`），把 [`deploy/admin.conf.example`](./deploy/admin.conf.example) 安装为 `/etc/systemd/system/ip-lookup.service.d/40-independent-admin.conf`，执行 `systemctl daemon-reload` 后重启。该配置在私有运行目录生成 `0400` 副本，因为某些 systemd 版本会用 ACL 和 `0440` 传递原始凭据。使用此方式时不要在 `/etc/ip-lookup.env` 再设置 `IP_ADMIN_PASSWORD_FILE`，空值也会覆盖单元配置。
+使用仓库提供的 `ip-lookup.service` 时，将凭据保存到 `/etc/ip-lookup-admin/admin.password`（`0600`），把 [`deploy/admin.conf.example`](./deploy/admin.conf.example) 安装为 `/etc/systemd/system/ip-lookup.service.d/40-independent-admin.conf`，执行 `systemctl daemon-reload` 后重启。该配置在私有运行目录生成 `0400` 副本，兼容使用 ACL 和 `0440` 传递原始凭据的 systemd 版本。使用此方式时不要在 `/etc/ip-lookup.env` 再设置 `IP_ADMIN_PASSWORD_FILE`，空值也会覆盖单元配置。
 
-后台显示今日、近 7 天与近 30 天的页面访问、成功查询及错误请求，并列出本服务的数据集和在线来源状态。按 UTC+8 自然日统计：成功的 HTML 页面请求计一次访问；快速与完整 API 查询分别是请求，不是独立访客。仅聚合计数保存在 `DATA_DIR/site-usage.json`，不保留访客 IP、查询目标或浏览器标识。首次启用前不补算历史；管理、健康检查和静态资源不计入流量。后台不读取或同步 WhoProbe 数据。
+后台提供仪表盘、实时访问流、趋势与地区/运营商/客户端分布分析、在线配额与离线情报库监控及账号安全管理。按 UTC+8 自然日统计：磁盘 `DATA_DIR/site-usage.json` 仅持久化纯聚合计数（不落盘访客 IP、查询目标或原始浏览器标识）；最近 1,000 条实时访问明细仅驻留进程内存环形缓冲，重启即清空。管理、健康检查和静态资源不计入流量。
 
 ## 部署
 

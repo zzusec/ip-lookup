@@ -19,10 +19,14 @@ import (
 var usageZone = time.FixedZone("UTC+8", 8*60*60)
 
 type usageDay struct {
-	Date      string `json:"date"`
-	PageViews uint64 `json:"pageViews"`
-	Lookups   uint64 `json:"lookups"`
-	Errors    uint64 `json:"errors"`
+	Date          string `json:"date"`
+	PageViews     uint64 `json:"pageViews"`
+	Lookups       uint64 `json:"lookups"`
+	Errors        uint64 `json:"errors"`
+	UV            uint64 `json:"uv,omitempty"`
+	CLILookups    uint64 `json:"cliLookups,omitempty"`
+	TargetLookups uint64 `json:"targetLookups,omitempty"`
+	Probes        uint64 `json:"probes,omitempty"`
 }
 
 type usageReport struct {
@@ -110,13 +114,7 @@ func (usage *SiteUsage) pruneLocked(now time.Time) {
 	}
 }
 
-func (usage *SiteUsage) record(kind string) {
-	usage.mu.Lock()
-	defer usage.mu.Unlock()
-	usage.recordLocked(time.Now(), kind)
-}
-
-func (usage *SiteUsage) recordLocked(now time.Time, kind string) {
+func (usage *SiteUsage) ensureDayLocked(now time.Time) int {
 	usage.pruneLocked(now)
 	date := now.In(usageZone).Format(time.DateOnly)
 	days := usage.report.Days
@@ -125,6 +123,22 @@ func (usage *SiteUsage) recordLocked(now time.Time, kind string) {
 		days = slices.Insert(days, index, usageDay{Date: date})
 		usage.report.Days = days
 	}
+	if now.After(usage.report.UpdatedAt) {
+		usage.report.UpdatedAt = now.UTC().Truncate(time.Second)
+	}
+	usage.dirty = true
+	return index
+}
+
+func (usage *SiteUsage) record(kind string) {
+	usage.mu.Lock()
+	defer usage.mu.Unlock()
+	usage.recordLocked(time.Now(), kind)
+}
+
+func (usage *SiteUsage) recordLocked(now time.Time, kind string) {
+	index := usage.ensureDayLocked(now)
+	days := usage.report.Days
 	switch kind {
 	case "view":
 		days[index].PageViews++
@@ -132,11 +146,35 @@ func (usage *SiteUsage) recordLocked(now time.Time, kind string) {
 		days[index].Lookups++
 	case "error":
 		days[index].Errors++
+	case "probe":
+		days[index].Probes++
 	}
-	if now.After(usage.report.UpdatedAt) {
-		usage.report.UpdatedAt = now.UTC().Truncate(time.Second)
+}
+
+func (usage *SiteUsage) recordDetailed(now time.Time, kind string, newVisitor, isCLI, isTarget bool) {
+	usage.mu.Lock()
+	defer usage.mu.Unlock()
+	index := usage.ensureDayLocked(now)
+	day := &usage.report.Days[index]
+	if newVisitor {
+		day.UV++
 	}
-	usage.dirty = true
+	switch kind {
+	case "view":
+		day.PageViews++
+	case "lookup":
+		day.Lookups++
+		if isCLI {
+			day.CLILookups++
+		}
+		if isTarget {
+			day.TargetLookups++
+		}
+	case "probe":
+		day.Probes++
+	case "error":
+		day.Errors++
+	}
 }
 
 func (usage *SiteUsage) observe(pattern string, status int, contentType string) {

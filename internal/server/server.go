@@ -99,7 +99,7 @@ func (s *Server) wrap(h http.Handler) http.Handler {
 		sw := &statusWriter{ResponseWriter: w, code: 200}
 		h.ServeHTTP(sw, r)
 		if !adminPath && s.Admin != nil && r.Method == http.MethodGet {
-			s.Admin.usage.observe(r.Pattern, sw.code, hd.Get("Content-Type"))
+			s.Admin.observeRequest(s, r, sw.code, hd.Get("Content-Type"), time.Since(start))
 		}
 		if !adminPath && r.URL.Path != "/healthz" && !strings.HasPrefix(r.URL.Path, "/static/") {
 			s.Log.Info("http", "method", r.Method, "route", r.Pattern, "status", sw.code,

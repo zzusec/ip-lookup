@@ -239,3 +239,136 @@ func TestAdminTransportAndDisabled(t *testing.T) {
 		}
 	}
 }
+
+func TestAdminStealthGateRotatePasswordAndTelemetry(t *testing.T) {
+	dir := t.TempDir()
+	credPath := filepath.Join(dir, "admin.creds")
+	initGate := rand.Text()[:16]
+	initPass := rand.Text()
+	nextPass := rand.Text()
+	seed := "gate_key: " + initGate + "\nusername: operator\npassword: " + initPass + "\n"
+	if err := os.WriteFile(credPath, []byte(seed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	panel, err := NewAdminPanel(credPath, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs := new(bytes.Buffer)
+	logger := slog.New(slog.NewTextHandler(logs, nil))
+	app := Server{Admin: panel, Web: web.FS, Log: logger, TrustProxy: true, Lookup: &lookup.Service{
+		Data: datasets.NewManager(dir, "test", logger), Online: sources.NewSet(nil, []*sources.Provider{{Name: "test-provider"}}),
+	}}
+	handler, err := app.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := func(method, path, body string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, adminTestOrigin+path, strings.NewReader(body))
+		r.RemoteAddr = "127.0.0.1:4444"
+		r.Header.Set("X-Forwarded-Proto", "https")
+		r.Header.Set("X-Real-IP", "198.51.100.42")
+		if method == "POST" {
+			r.Header.Set("Origin", adminTestOrigin)
+			r.Header.Set("Content-Type", "application/json")
+		}
+		for _, c := range cookies {
+			if c != nil {
+				r.AddCookie(c)
+			}
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+
+	// 1. Stealth 404 without ?k= or with wrong ?k=
+	if out := req("GET", "/admin", ""); out.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 without ?k=, got %d", out.Code)
+	}
+	if out := req("GET", "/admin?k=wrong", ""); out.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 with wrong ?k=, got %d", out.Code)
+	}
+	if out := req("POST", "/admin/api/login", `{"username":"operator","password":"`+initPass+`"}`); out.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 on login without gate, got %d", out.Code)
+	}
+
+	// 2. Valid ?k= unlocks gate and sets gate cookie
+	gateOut := req("GET", "/admin?k="+initGate, "")
+	if gateOut.Code != http.StatusOK || len(gateOut.Result().Cookies()) == 0 {
+		t.Fatalf("expected 200 and gate cookie, got %d", gateOut.Code)
+	}
+	gateCookie := gateOut.Result().Cookies()[0]
+
+	// 3. Progressive 3-strike brute-force lock + unblock
+	for range 3 {
+		if out := req("POST", "/admin/api/login", `{"username":"operator","password":"wrong"}`, gateCookie); out.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401 on wrong password, got %d", out.Code)
+		}
+	}
+	if out := req("POST", "/admin/api/login", `{"username":"operator","password":"`+initPass+`"}`, gateCookie); out.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 after 3 strikes in gated mode, got %d", out.Code)
+	}
+	panel.live.unblockIP("198.51.100.42")
+
+	// 4. Login with username + password
+	loginOut := req("POST", "/admin/api/login", `{"username":"operator","password":"`+initPass+`"}`, gateCookie)
+	if loginOut.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 login, got %d", loginOut.Code)
+	}
+	sessCookie := loginOut.Result().Cookies()[0]
+
+	// 5. Generate public traffic with iOS 27.2 frozen UA and verify /admin/api/visits + /admin/api/visitor
+	pubReq := httptest.NewRequest("GET", "https://ip.example.test/", nil)
+	pubReq.RemoteAddr = "127.0.0.1:5000"
+	pubReq.Header.Set("X-Forwarded-Proto", "https")
+	pubReq.Header.Set("X-Real-IP", "203.0.113.88")
+	pubReq.Header.Set("Accept", "text/html")
+	pubReq.Header.Set("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.2 Mobile/15E148 Safari/604.1")
+	pubRec := httptest.NewRecorder()
+	handler.ServeHTTP(pubRec, pubReq)
+	if pubRec.Code != http.StatusOK {
+		t.Fatalf("public page failed: %d", pubRec.Code)
+	}
+
+	vOut := req("GET", "/admin/api/visits?page=1&size=10", "", sessCookie)
+	if vOut.Code != http.StatusOK || !strings.Contains(vOut.Body.String(), "iOS 27.2") || !strings.Contains(vOut.Body.String(), "Safari 27.2") {
+		t.Fatalf("visits did not capture iOS 27.2 frozen UA resolution: %s", vOut.Body.String())
+	}
+	dOut := req("GET", "/admin/api/visitor?ip=203.0.113.88", "", sessCookie)
+	if dOut.Code != http.StatusOK || !strings.Contains(dOut.Body.String(), "203.0.113.88") {
+		t.Fatalf("visitor detail failed: %d %s", dOut.Code, dOut.Body.String())
+	}
+
+	// 6. Rotate ?k= token and change password, then verify persistence across restart
+	rotOut := req("POST", "/admin/api/rotate-url-token", `{"password":"`+initPass+`"}`, sessCookie)
+	if rotOut.Code != http.StatusOK {
+		t.Fatalf("rotate token failed: %d %s", rotOut.Code, rotOut.Body.String())
+	}
+	var rotResp struct {
+		URLToken string `json:"url_token"`
+	}
+	if err := json.Unmarshal(rotOut.Body.Bytes(), &rotResp); err != nil || len(rotResp.URLToken) != 16 {
+		t.Fatalf("unexpected rotated token: %+v (%v)", rotResp, err)
+	}
+	if out := req("GET", "/admin?k="+initGate, ""); out.Code != http.StatusNotFound {
+		t.Fatalf("old ?k= must return 404 immediately after rotation, got %d", out.Code)
+	}
+
+	pwOut := req("POST", "/admin/api/change-password", `{"username":"admin2","old_password":"`+initPass+`","new_password":"`+nextPass+`"}`, sessCookie)
+	if pwOut.Code != http.StatusOK {
+		t.Fatalf("change password failed: %d %s", pwOut.Code, pwOut.Body.String())
+	}
+
+	reloaded, err := NewAdminPanel(credPath, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded.mu.Lock()
+	persistedOK := reloaded.gateKey == rotResp.URLToken && reloaded.username == "admin2" && reloaded.verifyPasswordLocked(nextPass)
+	reloaded.mu.Unlock()
+	if !persistedOK {
+		t.Fatal("rotated ?k= token and changed password did not persist across restart")
+	}
+}

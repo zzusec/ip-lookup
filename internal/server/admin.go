@@ -649,13 +649,20 @@ func (panel *AdminPanel) register(mux *http.ServeMux, srv *Server) error {
 			if size <= 0 {
 				size = 20
 			}
+			day := strings.TrimSpace(qs.Get("day"))
+			from := strings.TrimSpace(qs.Get("from"))
+			to := strings.TrimSpace(qs.Get("to"))
+			if day != "" {
+				from = day
+				to = day
+			}
 			rows, total := panel.live.queryVisits(visitQuery{
 				Page:  max(1, page),
 				Size:  size,
 				Q:     qs.Get("q"),
 				Kind:  qs.Get("kind"),
-				From:  qs.Get("from"),
-				To:    qs.Get("to"),
+				From:  from,
+				To:    to,
 				Today: qs.Get("today") == "1",
 				Err:   qs.Get("err") == "1",
 				Sort:  qs.Get("sort"),

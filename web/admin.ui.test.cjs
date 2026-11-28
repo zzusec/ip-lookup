@@ -13,7 +13,7 @@ const playwright = ['playwright', '/opt/homebrew/lib/node_modules/@playwright/cl
 if (!playwright) throw new Error('Install Playwright to run the admin UI tests.');
 const {chromium} = require(playwright);
 
-const rawDate = '2026-11-27T17:00:00Z';
+const rawDate = '2026-11-27T17:00:00Z'; // 2026-11-28 01:00:00 UTC+8
 const stamp = {schema: 1, site: 'ip', startedAt: '2026-11-04T16:30:00Z', updatedAt: rawDate};
 const usage = {...stamp, days: [
   {date: '2026-11-05', pageViews: 30, lookups: 100, errors: 7, uv: 18, cliLookups: 12, targetLookups: 9, probes: 4},
@@ -31,9 +31,26 @@ const live = {
   uv7d: 3,
   uv30d: 21,
   recentCount: 1,
-  regions: [{name: '新加坡', visitors: 1, requests: 5}],
+  regions: [{name: '新加坡', cc: 'SG', visitors: 1, requests: 5}],
   asns: [{name: 'AS45143 Singtel Mobile', visitors: 1, requests: 5}],
   clients: [{name: 'iOS 27.2 · Safari 27.2', visitors: 1, requests: 5}],
+  topIps: [{
+    ip: '119.234.40.14',
+    cc: 'SG',
+    location: '新加坡',
+    asn: 'AS45143',
+    isp: 'Singtel Mobile',
+    label: '移动网络',
+    os: 'iOS 27.2',
+    browser: 'Safari 27.2',
+    views: 1,
+    lookups: 4,
+    probes: 1,
+    errors: 0,
+    firstSeen: '2026-11-28 00:50:00',
+    lastSeen: '2026-11-28 00:55:00',
+    targets: ['8.8.8.8'],
+  }],
 };
 
 let browser;
@@ -108,35 +125,39 @@ async function fixture(t, width, authenticated = false) {
       }));
     }
     if (path === '/admin/api/visits' && request.method === 'GET') {
+      const dayParam = u.searchParams.get('day') || '';
+      const allItems = [{
+        id: 1,
+        time: '2026-11-28 00:55:00',
+        day: '2026-11-28',
+        ip: '119.234.40.14',
+        cc: 'SG',
+        location: '新加坡',
+        country: '新加坡',
+        asn: 'AS45143',
+        isp: 'Singtel Mobile',
+        kind: 'view',
+        targetIp: '119.234.40.14',
+        targetLabel: '移动网络',
+        os: 'iOS 27.2',
+        browser: 'Safari 27.2',
+        status: 200,
+        ms: 28,
+      }];
+      const items = dayParam ? allItems.filter(x => x.day === dayParam) : allItems;
       response.writeHead(200, {'Content-Type': 'application/json'});
       return response.end(JSON.stringify({
-        total: 1,
+        total: items.length,
         page: 1,
-        size: 20,
-        items: [{
-          id: 1,
-          time: '2026-11-28 00:55:00',
-          day: '2026-11-28',
-          ip: '119.234.40.14',
-          location: '新加坡',
-          country: '新加坡',
-          asn: 'AS45143',
-          isp: 'Singtel Mobile',
-          kind: 'view',
-          targetIp: '119.234.40.14',
-          targetLabel: '移动网络',
-          os: 'iOS 27.2',
-          browser: 'Safari 27.2',
-          status: 200,
-          ms: 28,
-        }],
+        size: 40,
+        items,
       }));
     }
     if (path === '/admin/api/visitor' && request.method === 'GET') {
       response.writeHead(200, {'Content-Type': 'application/json'});
       return response.end(JSON.stringify({
         ip: u.searchParams.get('ip') || '119.234.40.14',
-        summary: {country: '新加坡', location: '新加坡', asn: 'AS45143', isp: 'Singtel Mobile', label: '移动网络', prefix: '119.234.32.0/20'},
+        summary: {cc: 'SG', country: '新加坡', location: '新加坡', asn: 'AS45143', isp: 'Singtel Mobile', label: '移动网络', prefix: '119.234.32.0/20'},
         history: [],
       }));
     }
@@ -157,7 +178,7 @@ async function fixture(t, width, authenticated = false) {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const context = await browser.newContext({viewport: {width, height: 850}, timezoneId: 'America/Los_Angeles'});
+  const context = await browser.newContext({viewport: {width, height: 860}, timezoneId: 'America/Los_Angeles'});
   const page = await context.newPage();
   const violations = [];
   await context.route('**/*', route => {
@@ -176,75 +197,88 @@ async function fixture(t, width, authenticated = false) {
   return {page, origin, state, context};
 }
 
-test('stealth ?k= gate, sidebar navigation, drawer details, token rotation and logout', async t => {
+test('stealth ?k= gate, Zinc surface dashboard, 30d bar filter, 4 tabs, modal, token rotation and logout', async t => {
   const {page, origin, state} = await fixture(t, 1280);
 
   // Unkeyed /admin returns 404 stealth gate
   const unkeyed = await page.goto(origin + '/admin');
   assert.equal(unkeyed.status(), 404);
 
-  // Keyed ?k= opens purple login card
+  // Keyed ?k= opens clean Zinc login card
   await page.goto(`${origin}/admin?k=${state.gateKey}`);
-  await page.locator('#loginPage').waitFor();
-  assert.equal(await page.locator('#app').isVisible(), false);
+  await page.locator('#loginView').waitFor();
+  assert.equal(await page.locator('#dashView').isVisible(), false);
 
-  await page.getByLabel('管理密码').fill('wrong');
-  await page.locator('#submitLogin').click();
+  // Password show/hide & dark mode toggle
+  await page.locator('#btnLoginTheme').click();
+  assert.equal(await page.evaluate(() => document.documentElement.classList.contains('dark')), true);
+  await page.locator('#btnLoginTheme').click();
+  assert.equal(await page.evaluate(() => document.documentElement.classList.contains('dark')), false);
+
+  await page.getByLabel('登录密码').fill('wrong');
+  await page.locator('#admLoginBtn').click();
   await page.getByText('账号或密码不正确。').waitFor();
 
   await page.getByLabel('管理员账号').fill('admin');
-  await page.getByLabel('管理密码').fill('test-password');
-  await page.locator('#submitLogin').click();
-  await page.locator('#app').waitFor();
+  await page.getByLabel('登录密码').fill('test-password');
+  await page.locator('#admLoginBtn').click();
+  await page.locator('#dashView').waitFor();
 
-  // Verify China-day aggregates on dashboard
-  const rows = await page.locator('#totals tr').allTextContents();
-  assert.equal(rows.length, 3);
-  assert.match(rows[0], /今日.*1.*1.*5.*2.*1.*0/);
-  assert.match(rows[2], /近 30 天.*21.*34.*107.*15.*6.*8/);
+  // Verify China-day KPI cards & 30d daily breakdown
+  assert.equal(await page.locator('#kpiTodayUv').textContent(), '1');
+  assert.match(await page.locator('#kpiTodaySub').textContent(), /网页 1 次 · 查询 5 次/);
+  assert.match(await page.locator('#kpi30dSub').textContent(), /30日独立 IP 21 · 总请求 141/);
+  assert.match(await page.locator('#kpiLookupTotal').textContent(), /107 次/);
+  assert.match(await page.locator('#kpiTopRegions').innerText(), /新加坡[\s\S]*1 IP/);
 
-  // Navigate to Live Visits and open IP dossier dialog
-  await page.locator('#topNav .tab[data-view="visits"]').click();
-  await page.getByText('119.234.40.14').first().waitFor();
-  await page.getByText('iOS 27.2 · Safari 27.2').waitFor();
-  await page.locator('#visitsTable tbody tr').first().click();
-  await page.getByText('119.234.32.0/20').waitFor();
-  await page.locator('#drawerClose').click();
-
-  // Navigate to Analytics (SVG chart + 30d details)
-  await page.locator('#topNav .tab[data-view="analytics"]').click();
-  await page.locator('#plot').waitFor();
-  await page.locator('#anaSpan').selectOption('30');
-  await page.getByText('查看每日数值').click();
+  await page.getByText('查看每日数值汇总').click();
   assert.equal(await page.locator('#dayRows tr').count(), 30);
   assert.match(await page.locator('#dayRows tr').last().textContent(), /未采集/);
 
-  // Navigate to Sources & Quotas (no XSS img execution)
-  await page.locator('#topNav .tab[data-view="sources"]').click();
+  // Click a 30-day bar to filter that day and then clear
+  await page.locator('[data-daybar="2026-11-05"]').click();
+  await page.locator('#btnClearDayFilter').waitFor();
+  assert.match(await page.locator('#btnClearDayFilter').textContent(), /仅看 2026-11-05/);
+  await page.locator('#btnClearDayFilter').click();
+
+  // Verify real-time visits table & IP dossier modal
+  await page.getByText('119.234.40.14').first().waitFor();
+  await page.getByText('iOS 27.2 · Safari 27.2').first().waitFor();
+  await page.locator('#visitsTableBody [data-openip="119.234.40.14"]').first().click();
+  await page.locator('#ipDetailModal').waitFor();
+  await page.getByText('119.234.32.0/20').waitFor();
+  await page.locator('#mdlCloseBtn').click();
+
+  // Tab 2: Unique IPs aggregation
+  await page.locator('#admTabs [data-admtab="ips"]').click();
+  assert.match(await page.locator('#ipsTableBody').innerText(), /119\.234\.40\.14[\s\S]*1 网页 · 4 查询 · 1 实测[\s\S]*8\.8\.8\.8/);
+
+  // Tab 3: Sources & Quotas (verify XSS img neutralization)
+  await page.locator('#admTabs [data-admtab="sources"]').click();
   assert.match(await page.locator('#online').innerText(), /限流[\s\S]*100\/day · 已用 42[\s\S]*42%/);
-  assert.match(await page.locator('#datasets').innerText(), /错误.*无法解包/);
+  assert.match(await page.locator('#datasets').innerText(), /错误[\s\S]*无法解包/);
   assert.equal(await page.locator('#datasets img').count(), 0);
 
-  // Navigate to Security and rotate ?k= URL token
+  // Tab 4: Security & ?k= token rotation
   page.once('dialog', d => d.accept());
-  await page.locator('#topNav .tab[data-view="security"]').click();
+  await page.locator('#admTabs [data-admtab="security"]').click();
   await page.locator('#secTokPw').fill('test-password');
   await page.locator('[data-action="rotate-token"]').click();
   await page.getByText(new RegExp(state.rotatedKey)).first().waitFor();
 
   // Logout failure handling then clean logout
   state.logoutStatus = 503;
-  await page.locator('#logout').click();
-  await page.getByText('退出未确认，请重试。').waitFor();
-  assert.equal(await page.locator('#app').isVisible(), true);
+  await page.locator('#btnAdmLogout').click();
+  await page.getByText('退出未确认，请重试。').first().waitFor();
+  assert.equal(await page.locator('#dashView').isVisible(), true);
 
   state.logoutStatus = 204;
-  await page.locator('#logout').click();
+  await page.locator('#btnAdmLogout').click();
   await page.getByText('已退出登录。').waitFor();
-  assert.equal(await page.locator('#app').isVisible(), false);
+  assert.equal(await page.locator('#dashView').isVisible(), false);
 });
 
-test('mobile 393px viewport, zero horizontal overflow, malformed data, retry and expiry', async t => {
+test('mobile 393px viewport, zero horizontal overflow across all tabs, malformed data, retry and expiry', async t => {
   const {page, origin, state} = await fixture(t, 393, true);
   state.overviewStatus = 503;
   await page.goto(origin + '/admin/');
@@ -252,32 +286,31 @@ test('mobile 393px viewport, zero horizontal overflow, malformed data, retry and
 
   state.overviewStatus = 200;
   await page.locator('#retry').click();
-  await page.locator('#app').waitFor();
+  await page.locator('#dashView').waitFor();
 
   const noOverflow = () => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
   assert.ok(await noOverflow());
 
-  await page.locator('#topNav .tab[data-view="visits"]').click();
-  await page.getByText('119.234.40.14').first().waitFor();
-  assert.ok(await noOverflow());
-
-  await page.locator('#topNav .tab[data-view="dashboard"]').click();
+  for (const tab of ['visits', 'ips', 'sources', 'security']) {
+    await page.locator(`#admTabs [data-admtab="${tab}"]`).click();
+    assert.ok(await noOverflow(), `overflow on tab ${tab}`);
+  }
 
   state.overviewStatus = 500;
-  await page.locator('#refreshBtn').click();
-  await page.getByText(/显示上次成功/).waitFor();
+  await page.locator('#btnRefreshAdm').click();
+  await page.getByText(/显示上次成功加载的数据/).waitFor();
 
   state.overviewStatus = 200;
   state.usage = null;
-  await page.locator('#refreshBtn').click();
-  await page.getByText('未采集访问统计。').waitFor();
+  await page.locator('#btnRefreshAdm').click();
+  await page.locator('#admNoticeBar').getByText('未采集访问统计。').waitFor();
 
   state.usage = {...usage, days: [{date: 'not a date', pageViews: 0, lookups: 0, errors: 0}]};
-  await page.locator('#refreshBtn').click();
+  await page.locator('#btnRefreshAdm').click();
   await page.getByText(/不能按零流量计算/).waitFor();
 
   state.overviewStatus = 401;
-  await page.locator('#refreshBtn').click();
+  await page.locator('#btnRefreshAdm').click();
   await page.getByText(/会话已过期/).waitFor();
-  assert.equal(await page.locator('#app').isVisible(), false);
+  assert.equal(await page.locator('#dashView').isVisible(), false);
 });

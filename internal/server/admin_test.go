@@ -336,6 +336,13 @@ func TestAdminStealthGateRotatePasswordAndTelemetry(t *testing.T) {
 	if vOut.Code != http.StatusOK || !strings.Contains(vOut.Body.String(), "iOS 27.2") || !strings.Contains(vOut.Body.String(), "Safari 27.2") {
 		t.Fatalf("visits did not capture iOS 27.2 frozen UA resolution: %s", vOut.Body.String())
 	}
+	if emptyDay := req("GET", "/admin/api/visits?day=1999-01-01", "", sessCookie); emptyDay.Code != http.StatusOK || !strings.Contains(emptyDay.Body.String(), `"total":0`) {
+		t.Fatalf("visits day filter failed: %d %s", emptyDay.Code, emptyDay.Body.String())
+	}
+	ovOut := req("GET", "/admin/api/overview", "", sessCookie)
+	if ovOut.Code != http.StatusOK || !strings.Contains(ovOut.Body.String(), `"topIps":[`) || !strings.Contains(ovOut.Body.String(), "203.0.113.88") {
+		t.Fatalf("overview did not include aggregated topIps: %d %s", ovOut.Code, ovOut.Body.String())
+	}
 	dOut := req("GET", "/admin/api/visitor?ip=203.0.113.88", "", sessCookie)
 	if dOut.Code != http.StatusOK || !strings.Contains(dOut.Body.String(), "203.0.113.88") {
 		t.Fatalf("visitor detail failed: %d %s", dOut.Code, dOut.Body.String())

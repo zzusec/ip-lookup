@@ -21,6 +21,7 @@ const (
 	maxVisitRing   = 1000
 	maxLoginLogs   = 200
 	maxTrackedDist = 200
+	maxTrackedIPs  = 500
 	maxDailyUVSet  = 50000
 )
 
@@ -29,6 +30,7 @@ type visitRecord struct {
 	Time        string `json:"time"`
 	Day         string `json:"day"`
 	IP          string `json:"ip"`
+	CC          string `json:"cc,omitempty"`
 	Location    string `json:"location"`
 	Country     string `json:"country"`
 	ASN         string `json:"asn"`
@@ -44,19 +46,39 @@ type visitRecord struct {
 
 type distItem struct {
 	Name     string `json:"name"`
+	CC       string `json:"cc,omitempty"`
 	Visitors int    `json:"visitors"`
 	Requests int    `json:"requests"`
 }
 
+type ipAggItem struct {
+	IP        string   `json:"ip"`
+	CC        string   `json:"cc,omitempty"`
+	Location  string   `json:"location"`
+	ASN       string   `json:"asn"`
+	ISP       string   `json:"isp"`
+	Label     string   `json:"label,omitempty"`
+	OS        string   `json:"os"`
+	Browser   string   `json:"browser"`
+	Views     int      `json:"views"`
+	Lookups   int      `json:"lookups"`
+	Probes    int      `json:"probes"`
+	Errors    int      `json:"errors"`
+	FirstSeen string   `json:"firstSeen"`
+	LastSeen  string   `json:"lastSeen"`
+	Targets   []string `json:"targets,omitempty"`
+}
+
 type liveOverview struct {
-	TodayUV     uint64     `json:"todayUv"`
-	YestUV      uint64     `json:"yestUv"`
-	UV7d        uint64     `json:"uv7d"`
-	UV30d       uint64     `json:"uv30d"`
-	RecentCount int        `json:"recentCount"`
-	Regions     []distItem `json:"regions"`
-	ASNs        []distItem `json:"asns"`
-	Clients     []distItem `json:"clients"`
+	TodayUV     uint64      `json:"todayUv"`
+	YestUV      uint64      `json:"yestUv"`
+	UV7d        uint64      `json:"uv7d"`
+	UV30d       uint64      `json:"uv30d"`
+	RecentCount int         `json:"recentCount"`
+	Regions     []distItem  `json:"regions"`
+	ASNs        []distItem  `json:"asns"`
+	Clients     []distItem  `json:"clients"`
+	TopIPs      []ipAggItem `json:"topIps"`
 }
 
 type ipBlockEntry struct {
@@ -79,8 +101,14 @@ type loginLogEntry struct {
 }
 
 type distCounter struct {
+	cc       string
 	requests int
 	visitors map[uint64]struct{}
+}
+
+type ipAggState struct {
+	item    ipAggItem
+	lastSeq uint64
 }
 
 type liveTelemetry struct {
@@ -92,6 +120,7 @@ type liveTelemetry struct {
 	regions   map[string]*distCounter
 	asns      map[string]*distCounter
 	clients   map[string]*distCounter
+	ipAgg     map[string]*ipAggState
 	blocks    map[string]*ipBlockState
 	loginLogs []loginLogEntry
 }
@@ -112,6 +141,7 @@ func newLiveTelemetry() *liveTelemetry {
 		regions: make(map[string]*distCounter),
 		asns:    make(map[string]*distCounter),
 		clients: make(map[string]*distCounter),
+		ipAgg:   make(map[string]*ipAggState),
 		blocks:  make(map[string]*ipBlockState),
 	}
 	rand.Read(t.salt[:])
@@ -127,7 +157,7 @@ func (t *liveTelemetry) ipHash(scope, ip string) uint64 {
 	return binary.LittleEndian.Uint64(sum[:8])
 }
 
-func bumpDist(m map[string]*distCounter, key string, visitorHash uint64) {
+func bumpDist(m map[string]*distCounter, key, cc string, visitorHash uint64) {
 	if key == "" {
 		return
 	}
@@ -136,8 +166,10 @@ func bumpDist(m map[string]*distCounter, key string, visitorHash uint64) {
 		if len(m) >= maxTrackedDist {
 			return
 		}
-		c = &distCounter{visitors: make(map[uint64]struct{})}
+		c = &distCounter{cc: cc, visitors: make(map[uint64]struct{})}
 		m[key] = c
+	} else if c.cc == "" && cc != "" {
+		c.cc = cc
 	}
 	c.requests++
 	if len(c.visitors) < 10000 {
@@ -148,7 +180,7 @@ func bumpDist(m map[string]*distCounter, key string, visitorHash uint64) {
 func topDist(m map[string]*distCounter, limit int) []distItem {
 	out := make([]distItem, 0, len(m))
 	for name, c := range m {
-		out = append(out, distItem{Name: name, Visitors: len(c.visitors), Requests: c.requests})
+		out = append(out, distItem{Name: name, CC: c.cc, Visitors: len(c.visitors), Requests: c.requests})
 	}
 	slices.SortFunc(out, func(a, b distItem) int {
 		if a.Visitors != b.Visitors {
@@ -158,6 +190,97 @@ func topDist(m map[string]*distCounter, limit int) []distItem {
 			return b.Requests - a.Requests
 		}
 		return strings.Compare(a.Name, b.Name)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+func (t *liveTelemetry) bumpIPAggLocked(rec visitRecord) {
+	if rec.IP == "" {
+		return
+	}
+	st, ok := t.ipAgg[rec.IP]
+	if !ok {
+		if len(t.ipAgg) >= maxTrackedIPs {
+			var oldestKey string
+			var oldestSeq uint64 = ^uint64(0)
+			for k, v := range t.ipAgg {
+				if v.lastSeq < oldestSeq {
+					oldestSeq = v.lastSeq
+					oldestKey = k
+				}
+			}
+			if oldestKey != "" {
+				delete(t.ipAgg, oldestKey)
+			}
+		}
+		st = &ipAggState{
+			item: ipAggItem{
+				IP:        rec.IP,
+				FirstSeen: rec.Time,
+			},
+		}
+		t.ipAgg[rec.IP] = st
+	}
+	st.lastSeq = t.seq + 1
+	st.item.LastSeen = rec.Time
+	if rec.CC != "" {
+		st.item.CC = rec.CC
+	}
+	if rec.Location != "" {
+		st.item.Location = rec.Location
+	}
+	if rec.ASN != "" {
+		st.item.ASN = rec.ASN
+	}
+	if rec.ISP != "" {
+		st.item.ISP = rec.ISP
+	}
+	if (rec.TargetIP == "" || rec.TargetIP == rec.IP) && rec.TargetLabel != "" {
+		st.item.Label = rec.TargetLabel
+	}
+	if rec.OS != "" {
+		st.item.OS = rec.OS
+	}
+	if rec.Browser != "" {
+		st.item.Browser = rec.Browser
+	}
+	switch rec.Kind {
+	case "view":
+		st.item.Views++
+	case "probe":
+		st.item.Probes++
+	case "error":
+		st.item.Errors++
+	default:
+		st.item.Lookups++
+	}
+	if rec.Status >= 400 && rec.Kind != "error" {
+		st.item.Errors++
+	}
+	if rec.TargetIP != "" && rec.TargetIP != rec.IP && len(st.item.Targets) < 6 && !slices.Contains(st.item.Targets, rec.TargetIP) {
+		st.item.Targets = append(st.item.Targets, rec.TargetIP)
+	}
+}
+
+func topIPAgg(m map[string]*ipAggState, limit int) []ipAggItem {
+	out := make([]ipAggItem, 0, len(m))
+	for _, st := range m {
+		cp := st.item
+		if len(cp.Targets) > 0 {
+			cp.Targets = slices.Clone(cp.Targets)
+		}
+		out = append(out, cp)
+	}
+	slices.SortFunc(out, func(a, b ipAggItem) int {
+		totA := a.Views + a.Lookups + a.Probes + a.Errors
+		totB := b.Views + b.Lookups + b.Probes + b.Errors
+		if totA != totB {
+			return totB - totA
+		}
+		return strings.Compare(b.LastSeen, a.LastSeen)
 	})
 	if len(out) > limit {
 		out = out[:limit]
@@ -196,6 +319,19 @@ func (t *liveTelemetry) pushVisit(now time.Time, rec visitRecord, vHash uint64) 
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	t.bumpIPAggLocked(rec)
+	if vHash != 0 {
+		regionKey := rec.Country
+		if regionKey == "" {
+			regionKey = rec.Location
+		}
+		bumpDist(t.regions, regionKey, rec.CC, vHash)
+		asnKey := strings.TrimSpace(rec.ASN + " " + rec.ISP)
+		bumpDist(t.asns, asnKey, "", vHash)
+		clientKey := strings.TrimSpace(rec.OS + " · " + rec.Browser)
+		bumpDist(t.clients, clientKey, "", vHash)
+	}
+
 	// Coalesce an automatic self_lookup right after a browser page load from the same IP
 	// so opening the homepage once shows one clean enriched row instead of two duplicate rows.
 	if rec.Kind == "self_lookup" && rec.Status >= 200 && rec.Status < 300 && len(t.ring) > 0 {
@@ -218,18 +354,6 @@ func (t *liveTelemetry) pushVisit(now time.Time, rec visitRecord, vHash uint64) 
 		t.ring[len(t.ring)-1] = rec
 	} else {
 		t.ring = append(t.ring, rec)
-	}
-
-	if vHash != 0 {
-		regionKey := rec.Country
-		if regionKey == "" {
-			regionKey = rec.Location
-		}
-		bumpDist(t.regions, regionKey, vHash)
-		asnKey := strings.TrimSpace(rec.ASN + " " + rec.ISP)
-		bumpDist(t.asns, asnKey, vHash)
-		clientKey := strings.TrimSpace(rec.OS + " · " + rec.Browser)
-		bumpDist(t.clients, clientKey, vHash)
 	}
 }
 
@@ -265,6 +389,7 @@ func (t *liveTelemetry) overview(usage usageReport, now time.Time) liveOverview 
 		Regions:     topDist(t.regions, 12),
 		ASNs:        topDist(t.asns, 12),
 		Clients:     topDist(t.clients, 12),
+		TopIPs:      topIPAgg(t.ipAgg, 100),
 	}
 }
 
@@ -624,6 +749,7 @@ func parseUABrief(uaRaw string) (string, string) {
 }
 
 type ipSummary struct {
+	CC       string `json:"cc,omitempty"`
 	Country  string `json:"country"`
 	Location string `json:"location"`
 	ASN      string `json:"asn"`
@@ -654,6 +780,7 @@ func (s *Server) offlineIPSummary(addr netip.Addr) ipSummary {
 	isp := firstNonEmptyStr(res.Network.ISP, res.Network.ASName, res.Network.Org)
 	lbl := firstNonEmptyStr(res.Verdict.TypeLabel, res.Verdict.Label)
 	return ipSummary{
+		CC:       strings.ToUpper(strings.TrimSpace(res.Geo.CountryCode)),
 		Country:  res.Geo.Country,
 		Location: strings.Join(locParts, " · "),
 		ASN:      asn,
@@ -777,6 +904,7 @@ func (panel *AdminPanel) observeRequest(srv *Server, r *http.Request, status int
 		Time:        now.In(usageZone).Format("2006-01-02 15:04:05"),
 		Day:         now.In(usageZone).Format(time.DateOnly),
 		IP:          clientIP,
+		CC:          cSum.CC,
 		Location:    cSum.Location,
 		Country:     cSum.Country,
 		ASN:         cSum.ASN,

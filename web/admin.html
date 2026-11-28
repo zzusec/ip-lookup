@@ -1,101 +1,413 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="robots" content="noindex,nofollow">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <meta name="robots" content="noindex, nofollow">
   <meta name="referrer" content="no-referrer">
-  <meta name="color-scheme" content="light dark">
-  <title>节点控制台 · IP 查询站</title>
-  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <title>IP Lookup · 管理后台 — 每日访客、真实 IP 与数据源审计</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <link rel="stylesheet" href="/static/admin.css">
-  <script src="/static/admin.js" defer></script>
 </head>
 <body>
-  <section id="loginPage" class="auth-shell" hidden aria-labelledby="loginTitle">
-    <div class="auth-panel">
-      <div class="auth-head">
-        <img src="/static/favicon.svg" width="28" height="28" alt="">
-        <div>
-          <h1 id="loginTitle">节点运行与遥测控制台</h1>
-          <p>验证管理员凭据以读取实时流量与数据源状态</p>
+
+  <!-- Layer 2 Auth Gate: Username + Password Login Card -->
+  <section id="loginView" class="login-wrap">
+    <div class="surface-sheet login-card">
+      <div class="login-head">
+        <div class="brand-row">
+          <div class="brand-mark brand-mark-lg" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="9"/>
+              <path d="M3.6 9h16.8"/>
+              <path d="M3.6 15h16.8"/>
+              <path d="M12 3a14.5 14.5 0 0 0 0 18"/>
+              <path d="M12 3a14.5 14.5 0 0 1 0 18"/>
+            </svg>
+          </div>
+          <div>
+            <h1 class="login-title">IP Lookup · 管理后台</h1>
+            <p class="login-sub">请登录管理员账号</p>
+          </div>
         </div>
+        <button id="btnLoginTheme" type="button" class="icon-btn" title="切换深浅色主题" aria-label="切换深浅色主题">
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+        </button>
       </div>
-      <form id="loginForm" method="post" action="/admin/api/login">
-        <label class="field">
-          <span>管理员账号</span>
-          <input id="u" name="username" aria-label="管理员账号" autocomplete="username" value="admin" required>
-        </label>
-        <label class="field">
-          <span>管理密码</span>
-          <input id="p" name="password" aria-label="管理密码" type="password" autocomplete="current-password" placeholder="输入口令" required>
-        </label>
-        <button type="submit" id="submitLogin" class="btn primary full">进入控制台</button>
-        <div id="loginErr" class="auth-err" role="alert" aria-live="polite"></div>
+
+      <form id="admLoginForm" class="login-form" autocomplete="on">
+        <div class="field-group">
+          <label for="admUserInput" class="field-label">管理员账号</label>
+          <input id="admUserInput" name="username" type="text" value="admin" required autocomplete="username" spellcheck="false" placeholder="请输入账号" class="field-input">
+        </div>
+
+        <div class="field-group">
+          <label for="admPassInput" class="field-label">登录密码</label>
+          <div class="pwd-box">
+            <input id="admPassInput" name="password" type="password" required autocomplete="current-password" placeholder="请输入密码" class="field-input field-input-pwd">
+            <button id="btnTogglePwd" type="button" tabindex="-1" class="pwd-toggle">显示</button>
+          </div>
+        </div>
+
+        <div id="admLoginErr" class="login-err" role="alert"></div>
+
+        <button id="admLoginBtn" type="submit" class="btn-primary btn-block">登 录</button>
       </form>
-      <div class="auth-meta">
-        <span class="mono" id="loginHost">IP Lookup</span>
-        <a href="/" target="_blank" rel="noreferrer">返回公开查询页</a>
-      </div>
     </div>
   </section>
 
-  <div id="bootNotice" class="boot-state" role="status" aria-live="polite">
-    <span id="notice">正在连接节点控制台…</span>
-    <button id="retry" type="button" class="btn" hidden>重试</button>
-  </div>
-
-  <div id="app" class="console" hidden>
-    <header class="masthead">
-      <div class="wrap mast-row">
-        <div class="mast-brand">
-          <a href="/" target="_blank" rel="noreferrer" class="brand-mark" title="打开公开查询首页">
-            <img src="/static/favicon.svg" width="24" height="24" alt="">
-            <span>IP 查询站</span>
-          </a>
-          <span class="mast-sep">/</span>
-          <span class="mast-title">节点控制台</span>
-          <span class="status-pill ok" id="roleBadge">运行正常</span>
+  <!-- Sticky Top Command Bar -->
+  <header id="admHeader" hidden class="adm-header">
+    <div class="adm-container adm-header-inner">
+      <div class="header-left">
+        <a href="/" class="brand-mark brand-mark-sm" title="返回查询前台">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="9"/>
+            <path d="M3.6 9h16.8"/>
+            <path d="M3.6 15h16.8"/>
+            <path d="M12 3a14.5 14.5 0 0 0 0 18"/>
+            <path d="M12 3a14.5 14.5 0 0 1 0 18"/>
+          </svg>
+        </a>
+        <div class="header-titles">
+          <span class="header-brand">IP Lookup</span>
+          <span class="badge-dark">管理后台</span>
+          <span id="admUserBadge" hidden class="badge-emerald font-mono"></span>
         </div>
+        <span id="admLastSync" class="header-sync font-mono"></span>
+      </div>
 
-        <nav class="tab-bar" id="topNav" aria-label="控制台分区">
-          <button type="button" class="tab active" data-view="dashboard">概览</button>
-          <button type="button" class="tab" data-view="visits">实时流量</button>
-          <button type="button" class="tab" data-view="analytics">趋势分布</button>
-          <button type="button" class="tab" data-view="sources">情报源<span class="tab-dot" id="sourcesNavBadge" hidden></span></button>
-          <button type="button" class="tab" data-view="security">安全访问<span class="tab-dot" id="secNavBadge" hidden></span></button>
+      <div class="header-actions">
+        <a href="/" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" class="btn-ghost">打开查询站 ↗</a>
+        <button id="btnRefreshAdm" type="button" class="btn-primary btn-sm">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0-6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+          <span>刷新数据</span>
+        </button>
+        <button id="btnAdmTheme" type="button" class="icon-btn" title="切换深浅色主题" aria-label="切换深浅色主题">
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+        </button>
+        <button id="btnAdmLogout" type="button" class="btn-rose" title="退出管理员登录会话">退出登录</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Initial Load Failure Recovery View -->
+  <section id="loadErrorView" hidden class="adm-container load-err-wrap">
+    <div class="surface-sheet load-err-card">
+      <div class="load-err-title">后台概览数据暂时未能加载</div>
+      <p id="loadErrorMsg" class="load-err-sub">数据源状态暂不可用，请稍后重试。</p>
+      <button id="retry" type="button" class="btn-primary btn-sm">重试加载</button>
+    </div>
+  </section>
+
+  <!-- Authenticated Dashboard Workbench -->
+  <main id="dashView" hidden class="adm-container dash-main">
+
+    <div id="admNoticeBar" hidden class="notice-bar" role="status"></div>
+
+    <!-- Row 1: 5 Core Traffic & Query KPI Cards -->
+    <section class="kpi-grid">
+      <div class="surface-sheet kpi-card">
+        <div class="kpi-top">
+          <span class="kpi-label">今日独立访客 (UV)</span>
+          <span id="kpiDeltaBadge" class="badge-muted font-mono">--</span>
+        </div>
+        <div id="kpiTodayUv" class="kpi-val font-mono">--</div>
+        <div id="kpiTodaySub" class="kpi-sub font-mono">网页 -- 次 · 查询 -- 次</div>
+      </div>
+
+      <div class="surface-sheet kpi-card">
+        <div class="kpi-top">
+          <span class="kpi-label">昨日独立访客 (UV)</span>
+        </div>
+        <div id="kpiYestUv" class="kpi-val font-mono">--</div>
+        <div id="kpiYestSub" class="kpi-sub font-mono">昨日网页 -- 次 · 查询 -- 次</div>
+      </div>
+
+      <div class="surface-sheet kpi-card">
+        <div class="kpi-top">
+          <span class="kpi-label">近 7 日 / 30 日访客</span>
+        </div>
+        <div id="kpi7dUv" class="kpi-val font-mono">--</div>
+        <div id="kpi30dSub" class="kpi-sub font-mono">30日独立 IP -- · 总请求 --</div>
+      </div>
+
+      <div class="surface-sheet kpi-card">
+        <div class="kpi-top">
+          <span class="kpi-label">累计查询与实测 (30日)</span>
+          <span id="kpiTodayModeBadge" class="badge-emerald font-mono">今日 CLI 0 / 实测 0</span>
+        </div>
+        <div id="kpiLookupTotal" class="kpi-val font-mono">--</div>
+        <div id="kpiLookupSub" class="kpi-sub font-mono">查外部 IP -- · 443实测 -- · 异常 --</div>
+      </div>
+
+      <div class="surface-sheet kpi-card kpi-card-wide">
+        <div class="kpi-top">
+          <span class="kpi-label">热门来源地区 (实时会话)</span>
+        </div>
+        <div id="kpiTopRegions" class="region-list font-mono">
+          <div class="text-muted">暂无统计</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Row 2: Interactive 30-Day Daily UV / PV Bar Chart -->
+    <section class="surface-sheet chart-card">
+      <div class="chart-head">
+        <div class="chart-titles">
+          <h2 class="section-title">近 30 天每日访问趋势</h2>
+          <span class="section-sub">深色为独立访客 IP 数 (UV)，浅底为总请求次数 (网页+查询) · 点击任意日期柱筛选当天明细</span>
+        </div>
+        <div class="chart-actions">
+          <button id="btnClearDayFilter" type="button" hidden class="btn-chip-blue"></button>
+        </div>
+      </div>
+
+      <div id="dailyChartBox" class="daily-chart-box"></div>
+
+      <details class="daily-details">
+        <summary class="daily-summary">查看每日数值汇总</summary>
+        <div class="table-scroll daily-table-wrap">
+          <table class="adm-table adm-table-compact">
+            <thead>
+              <tr>
+                <th>日期 (UTC+8)</th>
+                <th>独立访客 (UV)</th>
+                <th>网页浏览</th>
+                <th>IP 查询</th>
+                <th>CLI / JSON</th>
+                <th>443 实测</th>
+                <th>异常请求</th>
+              </tr>
+            </thead>
+            <tbody id="dayRows"></tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+
+    <!-- Row 3: 4-Tab Workspace -->
+    <section class="workspace-sec">
+      <div class="toolbar-row">
+        <nav id="admTabs" class="seg-tabs" role="tablist" aria-label="后台工作区切换">
+          <button type="button" data-admtab="visits" role="tab" aria-selected="true" class="seg-tab is-active">
+            实时访客与 IP 明细 <span id="badgeVisitsCnt" class="tab-pill font-mono">0</span>
+          </button>
+          <button type="button" data-admtab="ips" role="tab" aria-selected="false" class="seg-tab">
+            按独立 IP 汇总 <span id="badgeIpsCnt" class="tab-pill font-mono">0</span>
+          </button>
+          <button type="button" data-admtab="sources" role="tab" aria-selected="false" class="seg-tab">
+            数据源与配额 <span id="badgeSourcesCnt" class="tab-pill font-mono">0</span>
+          </button>
+          <button type="button" data-admtab="security" role="tab" aria-selected="false" class="seg-tab">
+            账号与访问安全
+          </button>
         </nav>
 
-        <div class="mast-ops">
-          <span class="stamp mono" id="refreshedAt"></span>
-          <label class="pulse-toggle" id="autoRefreshLabel" title="每 10 秒自动同步当前视图">
-            <input type="checkbox" id="autoRefreshChk">
-            <span class="mono" id="arSec">10s</span>
-          </label>
-          <button type="button" class="btn sm" id="refreshBtn">刷新</button>
-          <button type="button" class="btn sm quiet" id="logout">退出</button>
+        <div id="admFilterBar" class="filter-bar">
+          <div id="eventFilterPills" class="ev-pills">
+            <button type="button" data-evf="" class="ev-pill is-active">全部</button>
+            <button type="button" data-evf="view" class="ev-pill">网页访问</button>
+            <button type="button" data-evf="target_lookup" class="ev-pill">查外部IP</button>
+            <button type="button" data-evf="cli" class="ev-pill">CLI/JSON</button>
+            <button type="button" data-evf="probe" class="ev-pill">443实测</button>
+            <button type="button" data-evf="err" class="ev-pill">异常</button>
+          </div>
+          <input id="admSearchInput" type="search" placeholder="搜 IP / 地区 / 运营商 / 系统…" class="search-input">
         </div>
       </div>
-    </header>
 
-    <main class="wrap deck">
-      <div id="inlineBanner" class="banner" hidden role="status" aria-live="polite"></div>
-      <div id="subBar" class="sub-bar" hidden>
-        <button type="button" class="btn sm" id="backBtn">返回上一视图</button>
-        <span class="mut" id="subCrumb"></span>
+      <!-- Tab Panel 1: Real-time Visitor & Query Log Table -->
+      <div id="panelAdmVisits" data-admpanel="visits" class="surface-sheet table-card">
+        <div class="table-scroll">
+          <table class="adm-table">
+            <thead>
+              <tr>
+                <th>时间 (UTC+8)</th>
+                <th>类型</th>
+                <th>访客真实 IP</th>
+                <th>归属地与运营商 (ASN)</th>
+                <th>终端系统 / 浏览器</th>
+                <th>查询目标 / 耗时（点击看档案）</th>
+              </tr>
+            </thead>
+            <tbody id="visitsTableBody"></tbody>
+          </table>
+        </div>
+        <div id="visitsPager" class="table-pager">
+          <span id="visitsPageInfo">共 0 条记录</span>
+          <div class="pager-btns">
+            <button id="btnPrevPage" type="button" disabled class="btn-ghost btn-xs">上一页</button>
+            <button id="btnNextPage" type="button" disabled class="btn-ghost btn-xs">下一页</button>
+          </div>
+        </div>
       </div>
-      <div id="view"></div>
-    </main>
+
+      <!-- Tab Panel 2: Aggregated Unique Visitor IPs -->
+      <div id="panelAdmIps" data-admpanel="ips" hidden class="surface-sheet table-card">
+        <div class="table-scroll">
+          <table class="adm-table">
+            <thead>
+              <tr>
+                <th>访客 IP</th>
+                <th>归属地与运营商</th>
+                <th>常用终端与浏览器</th>
+                <th>网页 / 查询 / 443实测</th>
+                <th>首次 / 最近来访</th>
+                <th>查询过的外部 IP / 档案</th>
+              </tr>
+            </thead>
+            <tbody id="ipsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Tab Panel 3: Online Quotas & Offline Datasets -->
+      <div id="panelAdmSources" data-admpanel="sources" hidden class="sources-stack">
+        <div class="surface-sheet inner-card">
+          <div class="inner-head">
+            <div>
+              <h3 class="section-title">在线情报源与配额状态</h3>
+              <p class="section-sub">实时监控各外部 API 配额消耗、剩余百分比与限流冷却窗口</p>
+            </div>
+            <span id="onlineSummaryBadge" class="badge-muted font-mono">--</span>
+          </div>
+          <div id="online" class="online-grid"></div>
+        </div>
+
+        <div class="surface-sheet table-card">
+          <div class="inner-head inner-head-pad">
+            <div>
+              <h3 class="section-title">离线 MMDB / CIDR 数据集状态</h3>
+              <p class="section-sub">内存映射的本地 IP 库、RIR 分配表与威胁情报集加载明细</p>
+            </div>
+            <span id="datasetSummaryBadge" class="badge-muted font-mono">--</span>
+          </div>
+          <div class="table-scroll">
+            <table id="datasets" class="adm-table">
+              <thead>
+                <tr>
+                  <th>数据集名称</th>
+                  <th>状态</th>
+                  <th>条目规模</th>
+                  <th>文件大小 / 更新时间</th>
+                  <th>详情或异常原因</th>
+                </tr>
+              </thead>
+              <tbody id="datasetsBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab Panel 4: Stealth Access Token, Password & Brute-Force Protection -->
+      <div id="panelAdmSecurity" data-admpanel="security" hidden class="security-stack">
+        <div class="sec-grid-2">
+          <div class="surface-sheet inner-card">
+            <div>
+              <h3 class="section-title">隐身后台入口令牌 (?k=)</h3>
+              <p class="section-sub">未携带正确访问令牌请求后台将直接返回 404，防止扫描器探测后台入口</p>
+            </div>
+            <div class="token-box">
+              <code id="secCurrentUrl" class="token-code font-mono">--</code>
+              <button id="btnCopyAdmUrl" type="button" class="btn-ghost btn-xs">复制链接</button>
+            </div>
+            <form id="rotateTokenForm" class="sec-inline-form">
+              <input id="secTokPw" type="password" autocomplete="current-password" placeholder="输入当前管理密码以确认重置" class="field-input field-input-sm">
+              <button type="submit" data-action="rotate-token" class="btn-primary btn-sm">重置访问令牌</button>
+            </form>
+          </div>
+
+          <div class="surface-sheet inner-card">
+            <div>
+              <h3 class="section-title">修改管理员账号与密码</h3>
+              <p class="section-sub">修改后立即写入加密凭据状态并持久化生效，重启服务不会丢失</p>
+            </div>
+            <form id="changePwForm" class="sec-stack-form">
+              <div class="sec-row-2">
+                <input id="secNewUser" type="text" autocomplete="username" spellcheck="false" placeholder="管理员账号 (默认保持不变)" class="field-input field-input-sm">
+                <input id="secOldPw" type="password" required autocomplete="current-password" placeholder="当前登录密码" class="field-input field-input-sm">
+              </div>
+              <div class="sec-row-2">
+                <input id="secNewPw" type="password" required autocomplete="new-password" placeholder="新登录密码 (至少 6 位可见字符)" class="field-input field-input-sm">
+                <button type="submit" class="btn-primary btn-sm">保存新密码</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <div class="sec-grid-2">
+          <div class="surface-sheet table-card">
+            <div class="inner-head inner-head-pad">
+              <div>
+                <h3 class="section-title">防爆破 IP 封锁列表</h3>
+                <p class="section-sub">连续输错 3 次锁 1 小时 · 再错 3 次锁 3 小时 · 第 3 轮永久封锁</p>
+              </div>
+            </div>
+            <div class="table-scroll">
+              <table class="adm-table">
+                <thead>
+                  <tr>
+                    <th>来源 IP</th>
+                    <th>归属地</th>
+                    <th>阶段 / 锁定截止</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="ipBlocksBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="surface-sheet table-card">
+            <div class="inner-head inner-head-pad">
+              <div>
+                <h3 class="section-title">管理员登录审计日志</h3>
+                <p class="section-sub">记录后台每一次登录成功与口令错误尝试</p>
+              </div>
+            </div>
+            <div class="table-scroll">
+              <table class="adm-table">
+                <thead>
+                  <tr>
+                    <th>时间 (UTC+8)</th>
+                    <th>来源 IP / 归属地</th>
+                    <th>账号</th>
+                    <th>结果</th>
+                  </tr>
+                </thead>
+                <tbody id="loginLogsBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Centered IP Dossier & Trace Modal -->
+  <div id="ipDetailModal" hidden role="dialog" aria-modal="true" aria-labelledby="mdlIpTitle" class="modal-backdrop">
+    <div class="surface-sheet modal-sheet">
+      <div class="modal-head">
+        <div class="modal-title-row">
+          <span id="mdlIpBadge" class="badge-dark font-mono">--</span>
+          <h3 id="mdlIpTitle" class="section-title">IP 离线档案与访问溯源</h3>
+        </div>
+        <div class="modal-actions">
+          <a id="mdlOpenLookupBtn" href="/" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" class="btn-emerald-solid btn-xs">前台完整穿透查询 ↗</a>
+          <button id="mdlCloseBtn" type="button" class="icon-btn" aria-label="关闭弹窗">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+      </div>
+      <div id="mdlBody" class="modal-body"></div>
+    </div>
   </div>
 
-  <dialog id="ipDialog" class="ip-dialog" aria-labelledby="dName">
-    <div class="dlg-head">
-      <h2 id="dName" class="mono">IP 详情</h2>
-      <button type="button" class="btn sm" id="drawerClose" aria-label="关闭详情">关闭</button>
-    </div>
-    <div id="dBody" class="dlg-body"></div>
-  </dialog>
+  <div id="admToast" hidden class="adm-toast" role="status" aria-live="polite"></div>
 
-  <noscript>此控制台需要启用 JavaScript。</noscript>
+  <script src="/static/admin.js"></script>
 </body>
 </html>

@@ -78,6 +78,7 @@
 
   const STATE = {
     tab: 'visits',
+    host: '',
     day: '',
     kind: '',
     errOnly: false,
@@ -180,23 +181,86 @@
     return {anchor, valid: !malformed, missing: false, malformed, map, startDay};
   }
 
-  function updateSecretUrlDisplay(gateKey) {
+  function updateHeaderSiteLinks() {
+    const activeHost = STATE.host || location.host;
+    const isLocal = /^(localhost|127\.|\[::1\])/i.test(activeHost);
+    const proto = isLocal ? location.protocol : 'https:';
+    const frontBtn = $('#btnOpenFront');
+    if (frontBtn) {
+      frontBtn.href = `${proto}//${activeHost}/`;
+      frontBtn.textContent = STATE.host ? `查询站 (${STATE.host.split('.')[1] || STATE.host}) ↗` : '打开查询站 ↗';
+    }
+    const whoBtn = $('#btnOpenSiblingWho');
+    if (whoBtn) {
+      if (/^ip\./i.test(activeHost)) {
+        const whoHost = activeHost.replace(/^ip\./i, 'who.');
+        whoBtn.href = `https://${whoHost}/`;
+        whoBtn.hidden = false;
+        whoBtn.title = `打开对应风控检测站 ${whoHost}`;
+      } else {
+        whoBtn.hidden = true;
+      }
+    }
+  }
+
+  function updateSecretUrlDisplay(gateKey, hosts = []) {
     if (gateKey) URL_KEY = gateKey;
     const codeEl = $('#secCurrentUrl');
-    if (!codeEl) return;
-    if (URL_KEY) {
-      codeEl.textContent = `${location.origin}/admin?k=${URL_KEY}`;
-    } else {
-      codeEl.textContent = `${location.origin}/admin`;
+    const suffix = URL_KEY ? `/admin?k=${URL_KEY}` : '/admin';
+    if (codeEl) {
+      codeEl.textContent = `${location.origin}${suffix}`;
     }
+    const multiEl = $('#secMultiUrls');
+    if (multiEl) {
+      const otherHosts = (hosts || []).map(h => h.host).filter(h => h && h !== location.hostname);
+      if (otherHosts.length > 0) {
+        multiEl.hidden = false;
+        multiEl.innerHTML = otherHosts.map(h => {
+          const full = `https://${h}${suffix}`;
+          return `
+            <div class="token-box">
+              <code class="token-code font-mono">${esc(full)}</code>
+              <button type="button" data-copyurl="${esc(full)}" class="btn-ghost btn-xs">复制链接</button>
+            </div>
+          `;
+        }).join('');
+      } else {
+        multiEl.hidden = true;
+        multiEl.innerHTML = '';
+      }
+    }
+  }
+
+  function renderHostSwitch(hosts) {
+    const nav = $('#admHostSwitch');
+    if (!nav) return;
+    const list = Array.isArray(hosts) ? hosts : [];
+    if (!list.length) {
+      nav.hidden = true;
+      nav.innerHTML = '';
+      return;
+    }
+    nav.hidden = false;
+    const totalReq = list.reduce((acc, h) => acc + Number(h.requests30d || 0), 0);
+    const pills = [
+      `<button type="button" data-hosttab="" class="ev-pill ${STATE.host === '' ? 'is-active' : ''}">全部站点<span class="host-pill-cnt font-mono">${totalReq}</span></button>`,
+      ...list.map(h => {
+        const on = STATE.host === h.host;
+        const cnt = Number(h.requests30d || h.recentCount || 0);
+        return `<button type="button" data-hosttab="${esc(h.host)}" class="ev-pill ${on ? 'is-active' : ''}">${esc(h.host)}<span class="host-pill-cnt font-mono">${cnt}</span></button>`;
+      }),
+    ];
+    nav.innerHTML = pills.join('');
+    updateHeaderSiteLinks();
   }
 
   function renderOverview(data, dateHdr) {
     STATE.overview = data;
     const live = data.live || {};
     const auth = data.auth || {};
-    if (auth.gateKey) updateSecretUrlDisplay(auth.gateKey);
-    else updateSecretUrlDisplay(URL_KEY);
+    renderHostSwitch(live.hosts || []);
+    if (auth.gateKey) updateSecretUrlDisplay(auth.gateKey, live.hosts || []);
+    else updateSecretUrlDisplay(URL_KEY, live.hosts || []);
 
     if (auth.username) {
       const uBadge = $('#admUserBadge');
@@ -378,6 +442,7 @@
       const locWithFlag = x.cc ? `${flagEmoji(x.cc)} ${x.location || countryName(x.cc)}` : (x.location || '');
       const geo = [locWithFlag, x.asn, x.isp].filter(Boolean).join(' · ') || '–';
       const dev = [x.os, x.browser].filter(Boolean).join(' · ') || '–';
+      const hostBadges = (x.hosts || []).map(h => `<button type="button" data-selecthost="${esc(h)}" class="badge-muted font-mono host-tag-btn" title="仅看 ${esc(h)}">${esc(h)}</button>`).join(' ');
       const targetsHtml = (x.targets || []).length
         ? x.targets.map(t => `<button type="button" data-openip="${esc(t)}" class="badge-amber font-mono" style="border:0;cursor:pointer">${esc(t)}</button>`).join(' ')
         : `<button type="button" data-openip="${esc(x.ip)}" class="dossier-chip"><span class="font-mono">${esc(x.label || '查看档案')}</span></button>`;
@@ -385,10 +450,13 @@
       return `
         <tr>
           <td>
-            <div class="cell-ip-group">
-              <button type="button" data-filterip="${esc(x.ip)}" class="ip-filter-btn" title="筛选该 IP 全部访问明细">${esc(x.ip)}</button>
-              <button type="button" data-copyip="${esc(x.ip)}" class="tiny-action">复制</button>
-              <a href="/${encodeURIComponent(x.ip)}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" class="tiny-link">查询↗</a>
+            <div class="cell-type-stack">
+              <div class="cell-ip-group">
+                <button type="button" data-filterip="${esc(x.ip)}" class="ip-filter-btn" title="筛选该 IP 全部访问明细">${esc(x.ip)}</button>
+                <button type="button" data-copyip="${esc(x.ip)}" class="tiny-action">复制</button>
+                <a href="/${encodeURIComponent(x.ip)}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" class="tiny-link">查询↗</a>
+              </div>
+              ${hostBadges}
             </div>
           </td>
           <td class="cell-truncate" title="${esc(geo)}">${esc(geo)}</td>
@@ -492,6 +560,7 @@
       page: String(STATE.page),
       size: String(STATE.size),
     });
+    if (STATE.host) qs.set('host', STATE.host);
     if (STATE.day) qs.set('day', STATE.day);
     if (STATE.kind) qs.set('kind', STATE.kind);
     if (STATE.errOnly) qs.set('err', '1');
@@ -533,10 +602,14 @@
           const tgt = row.targetIp && row.targetIp !== row.ip ? `查 ${row.targetIp}` : (row.targetLabel || '本机网络');
           const inspectIp = row.targetIp || row.ip;
 
+          const hostHtml = row.host
+            ? `<button type="button" data-selecthost="${esc(row.host)}" class="badge-muted font-mono host-tag-btn" title="仅看 ${esc(row.host)}">${esc(row.host)}</button>`
+            : '';
+
           return `
             <tr data-rowip="${esc(inspectIp)}">
               <td class="font-mono text-muted">${esc(shortTime(row.time))}</td>
-              <td><span class="${evCls}">${esc(evLabel)}</span></td>
+              <td><div class="cell-type-stack"><span class="${evCls}">${esc(evLabel)}</span>${hostHtml}</div></td>
               <td>
                 <div class="cell-ip-group">
                   <button type="button" data-filterip="${esc(row.ip)}" class="ip-filter-btn" title="筛选该 IP 全部轨迹">${esc(row.ip)}</button>
@@ -726,9 +799,10 @@
   }
 
   async function refreshAll(manual = false) {
+    const ovUrl = STATE.host ? `/admin/api/overview?host=${encodeURIComponent(STATE.host)}` : '/admin/api/overview';
     let r;
     try {
-      r = await fetch('/admin/api/overview', {
+      r = await fetch(ovUrl, {
         cache: 'no-store',
         credentials: 'same-origin',
         headers: authHeaders(),
@@ -865,6 +939,15 @@
     $('#btnRefreshAdm')?.addEventListener('click', () => refreshAll(true));
     $('#retry')?.addEventListener('click', () => refreshAll(false));
 
+    $('#admHostSwitch')?.addEventListener('click', e => {
+      const btn = e.target.closest('[data-hosttab]');
+      if (!btn) return;
+      STATE.host = btn.dataset.hosttab || '';
+      STATE.page = 1;
+      updateHeaderSiteLinks();
+      refreshAll(false);
+    });
+
     $('#admTabs')?.addEventListener('click', e => {
       const btn = e.target.closest('[data-admtab]');
       if (btn) switchTab(btn.dataset.admtab);
@@ -952,6 +1035,19 @@
         copyText(cIp.dataset.copyip, `已复制 IP ${cIp.dataset.copyip}`);
         return;
       }
+      const cUrl = e.target.closest('[data-copyurl]');
+      if (cUrl) {
+        copyText(cUrl.dataset.copyurl, '已复制后台入口链接');
+        return;
+      }
+      const selHost = e.target.closest('[data-selecthost]');
+      if (selHost) {
+        const h = selHost.dataset.selecthost || '';
+        STATE.host = STATE.host === h ? '' : h;
+        STATE.page = 1;
+        refreshAll(false);
+        return;
+      }
       const unblk = e.target.closest('[data-unblockip]');
       if (unblk) {
         const ip = unblk.dataset.unblockip;
@@ -996,7 +1092,7 @@
       const j = await r.json().catch(() => ({}));
       if (r.ok && j?.url_token) {
         if ($('#secTokPw')) $('#secTokPw').value = '';
-        updateSecretUrlDisplay(j.url_token);
+        updateSecretUrlDisplay(j.url_token, (STATE.overview?.live?.hosts) || []);
         try {
           history.replaceState(null, '', `/admin?k=${encodeURIComponent(j.url_token)}`);
         } catch (err) {}

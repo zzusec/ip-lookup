@@ -31,6 +31,10 @@ const live = {
   uv7d: 3,
   uv30d: 21,
   recentCount: 1,
+  hosts: [
+    {host: 'ip.alpha.example.test', todayUv: 1, uv30d: 20, requests30d: 140, recentCount: 1},
+    {host: 'ip.beta.example.test', todayUv: 0, uv30d: 1, requests30d: 1, recentCount: 0},
+  ],
   regions: [{name: '新加坡', cc: 'SG', visitors: 1, requests: 5}],
   asns: [{name: 'AS45143 Singtel Mobile', visitors: 1, requests: 5}],
   clients: [{name: 'iOS 27.2 · Safari 27.2', visitors: 1, requests: 5}],
@@ -223,6 +227,11 @@ test('stealth ?k= gate, Zinc surface dashboard, 30d bar filter, 4 tabs, modal, t
   await page.getByLabel('登录密码').fill('test-password');
   await page.locator('#admLoginBtn').click();
   await page.locator('#dashView').waitFor();
+
+  // Verify host switcher pills & sibling link update
+  await page.locator('#admHostSwitch [data-hosttab="ip.beta.example.test"]').click();
+  assert.equal(await page.locator('#btnOpenSiblingWho').getAttribute('href'), 'https://who.beta.example.test/');
+  await page.locator('#admHostSwitch [data-hosttab=""]').click();
 
   // Verify China-day KPI cards & 30d daily breakdown
   assert.equal(await page.locator('#kpiTodayUv').textContent(), '1');

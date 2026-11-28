@@ -29,6 +29,7 @@ type visitRecord struct {
 	ID          uint64 `json:"id"`
 	Time        string `json:"time"`
 	Day         string `json:"day"`
+	Host        string `json:"host,omitempty"`
 	IP          string `json:"ip"`
 	CC          string `json:"cc,omitempty"`
 	Location    string `json:"location"`
@@ -67,18 +68,29 @@ type ipAggItem struct {
 	FirstSeen string   `json:"firstSeen"`
 	LastSeen  string   `json:"lastSeen"`
 	Targets   []string `json:"targets,omitempty"`
+	Hosts     []string `json:"hosts,omitempty"`
+}
+
+type hostStatItem struct {
+	Host        string `json:"host"`
+	TodayUV     uint64 `json:"todayUv"`
+	UV30d       uint64 `json:"uv30d"`
+	Requests30d uint64 `json:"requests30d"`
+	RecentCount int    `json:"recentCount"`
 }
 
 type liveOverview struct {
-	TodayUV     uint64      `json:"todayUv"`
-	YestUV      uint64      `json:"yestUv"`
-	UV7d        uint64      `json:"uv7d"`
-	UV30d       uint64      `json:"uv30d"`
-	RecentCount int         `json:"recentCount"`
-	Regions     []distItem  `json:"regions"`
-	ASNs        []distItem  `json:"asns"`
-	Clients     []distItem  `json:"clients"`
-	TopIPs      []ipAggItem `json:"topIps"`
+	ActiveHost  string         `json:"activeHost,omitempty"`
+	TodayUV     uint64         `json:"todayUv"`
+	YestUV      uint64         `json:"yestUv"`
+	UV7d        uint64         `json:"uv7d"`
+	UV30d       uint64         `json:"uv30d"`
+	RecentCount int            `json:"recentCount"`
+	Hosts       []hostStatItem `json:"hosts"`
+	Regions     []distItem     `json:"regions"`
+	ASNs        []distItem     `json:"asns"`
+	Clients     []distItem     `json:"clients"`
+	TopIPs      []ipAggItem    `json:"topIps"`
 }
 
 type ipBlockEntry struct {
@@ -117,6 +129,7 @@ type liveTelemetry struct {
 	seq       uint64
 	ring      []visitRecord
 	dayUV     map[string]map[uint64]struct{}
+	hostDayUV map[string]map[string]map[uint64]struct{}
 	regions   map[string]*distCounter
 	asns      map[string]*distCounter
 	clients   map[string]*distCounter
@@ -137,12 +150,13 @@ type ipBlockState struct {
 
 func newLiveTelemetry() *liveTelemetry {
 	t := &liveTelemetry{
-		dayUV:   make(map[string]map[uint64]struct{}),
-		regions: make(map[string]*distCounter),
-		asns:    make(map[string]*distCounter),
-		clients: make(map[string]*distCounter),
-		ipAgg:   make(map[string]*ipAggState),
-		blocks:  make(map[string]*ipBlockState),
+		dayUV:     make(map[string]map[uint64]struct{}),
+		hostDayUV: make(map[string]map[string]map[uint64]struct{}),
+		regions:   make(map[string]*distCounter),
+		asns:      make(map[string]*distCounter),
+		clients:   make(map[string]*distCounter),
+		ipAgg:     make(map[string]*ipAggState),
+		blocks:    make(map[string]*ipBlockState),
 	}
 	rand.Read(t.salt[:])
 	return t
@@ -197,23 +211,23 @@ func topDist(m map[string]*distCounter, limit int) []distItem {
 	return out
 }
 
-func (t *liveTelemetry) bumpIPAggLocked(rec visitRecord) {
+func bumpIPAggMap(m map[string]*ipAggState, seq uint64, rec visitRecord) {
 	if rec.IP == "" {
 		return
 	}
-	st, ok := t.ipAgg[rec.IP]
+	st, ok := m[rec.IP]
 	if !ok {
-		if len(t.ipAgg) >= maxTrackedIPs {
+		if len(m) >= maxTrackedIPs {
 			var oldestKey string
 			var oldestSeq uint64 = ^uint64(0)
-			for k, v := range t.ipAgg {
+			for k, v := range m {
 				if v.lastSeq < oldestSeq {
 					oldestSeq = v.lastSeq
 					oldestKey = k
 				}
 			}
 			if oldestKey != "" {
-				delete(t.ipAgg, oldestKey)
+				delete(m, oldestKey)
 			}
 		}
 		st = &ipAggState{
@@ -222,9 +236,9 @@ func (t *liveTelemetry) bumpIPAggLocked(rec visitRecord) {
 				FirstSeen: rec.Time,
 			},
 		}
-		t.ipAgg[rec.IP] = st
+		m[rec.IP] = st
 	}
-	st.lastSeq = t.seq + 1
+	st.lastSeq = seq
 	st.item.LastSeen = rec.Time
 	if rec.CC != "" {
 		st.item.CC = rec.CC
@@ -263,6 +277,13 @@ func (t *liveTelemetry) bumpIPAggLocked(rec visitRecord) {
 	if rec.TargetIP != "" && rec.TargetIP != rec.IP && len(st.item.Targets) < 6 && !slices.Contains(st.item.Targets, rec.TargetIP) {
 		st.item.Targets = append(st.item.Targets, rec.TargetIP)
 	}
+	if rec.Host != "" && len(st.item.Hosts) < 6 && !slices.Contains(st.item.Hosts, rec.Host) {
+		st.item.Hosts = append(st.item.Hosts, rec.Host)
+	}
+}
+
+func (t *liveTelemetry) bumpIPAggLocked(rec visitRecord) {
+	bumpIPAggMap(t.ipAgg, t.seq+1, rec)
 }
 
 func topIPAgg(m map[string]*ipAggState, limit int) []ipAggItem {
@@ -271,6 +292,9 @@ func topIPAgg(m map[string]*ipAggState, limit int) []ipAggItem {
 		cp := st.item
 		if len(cp.Targets) > 0 {
 			cp.Targets = slices.Clone(cp.Targets)
+		}
+		if len(cp.Hosts) > 0 {
+			cp.Hosts = slices.Clone(cp.Hosts)
 		}
 		out = append(out, cp)
 	}
@@ -288,9 +312,9 @@ func topIPAgg(m map[string]*ipAggState, limit int) []ipAggItem {
 	return out
 }
 
-func (t *liveTelemetry) markVisitorLocked(now time.Time, ip string) (bool, uint64) {
+func (t *liveTelemetry) markVisitorLocked(now time.Time, host, ip string) (bool, bool, uint64) {
 	if ip == "" {
-		return false, 0
+		return false, false, 0
 	}
 	day := now.In(usageZone).Format(time.DateOnly)
 	cutoff := now.In(usageZone).AddDate(0, 0, -29).Format(time.DateOnly)
@@ -306,13 +330,43 @@ func (t *liveTelemetry) markVisitorLocked(now time.Time, ip string) (bool, uint6
 	}
 	hDay := t.ipHash(day, ip)
 	hAll := t.ipHash("30d", ip)
-	if _, seen := set[hDay]; seen {
-		return false, hAll
+	newGlobal := false
+	if _, seen := set[hDay]; !seen {
+		if len(set) < maxDailyUVSet {
+			set[hDay] = struct{}{}
+		}
+		newGlobal = true
 	}
-	if len(set) < maxDailyUVSet {
-		set[hDay] = struct{}{}
+
+	newHost := false
+	if h := validUsageHost(host); h != "" {
+		hDays, hExists := t.hostDayUV[h]
+		if !hExists && len(t.hostDayUV) < maxTrackedUsageHosts {
+			hDays = make(map[string]map[uint64]struct{})
+			t.hostDayUV[h] = hDays
+			hExists = true
+		}
+		if hExists {
+			for d := range hDays {
+				if d < cutoff {
+					delete(hDays, d)
+				}
+			}
+			hSet, dOK := hDays[day]
+			if !dOK {
+				hSet = make(map[uint64]struct{})
+				hDays[day] = hSet
+			}
+			hh := t.ipHash(day+"|"+h, ip)
+			if _, seen := hSet[hh]; !seen {
+				if len(hSet) < maxDailyUVSet {
+					hSet[hh] = struct{}{}
+				}
+				newHost = true
+			}
+		}
 	}
-	return true, hAll
+	return newGlobal, newHost, hAll
 }
 
 func (t *liveTelemetry) pushVisit(now time.Time, rec visitRecord, vHash uint64) {
@@ -336,7 +390,7 @@ func (t *liveTelemetry) pushVisit(now time.Time, rec visitRecord, vHash uint64) 
 	// so opening the homepage once shows one clean enriched row instead of two duplicate rows.
 	if rec.Kind == "self_lookup" && rec.Status >= 200 && rec.Status < 300 && len(t.ring) > 0 {
 		last := &t.ring[len(t.ring)-1]
-		if last.IP == rec.IP && last.Kind == "view" && last.Day == rec.Day {
+		if last.IP == rec.IP && last.Host == rec.Host && last.Kind == "view" && last.Day == rec.Day {
 			if last.TargetLabel == "" && rec.TargetLabel != "" {
 				last.TargetLabel = rec.TargetLabel
 			}
@@ -357,16 +411,8 @@ func (t *liveTelemetry) pushVisit(now time.Time, rec visitRecord, vHash uint64) 
 	}
 }
 
-func (t *liveTelemetry) overview(usage usageReport, now time.Time) liveOverview {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	today := now.In(usageZone).Format(time.DateOnly)
-	yest := now.In(usageZone).AddDate(0, 0, -1).Format(time.DateOnly)
-	cut7 := now.In(usageZone).AddDate(0, 0, -6).Format(time.DateOnly)
-
-	var todayUV, yestUV, uv7, uv30 uint64
-	for _, d := range usage.Days {
+func summarizeDaysUV(days []usageDay, today, yest, cut7 string) (todayUV, yestUV, uv7, uv30 uint64) {
+	for _, d := range days {
 		uv := d.UV
 		if d.Date == today {
 			todayUV = uv
@@ -379,23 +425,132 @@ func (t *liveTelemetry) overview(usage usageReport, now time.Time) liveOverview 
 		}
 		uv30 += uv
 	}
+	return
+}
 
+func (t *liveTelemetry) overview(usage usageReport, hostFilter string, seedHosts []string, now time.Time) liveOverview {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	today := now.In(usageZone).Format(time.DateOnly)
+	yest := now.In(usageZone).AddDate(0, 0, -1).Format(time.DateOnly)
+	cut7 := now.In(usageZone).AddDate(0, 0, -6).Format(time.DateOnly)
+
+	hostOrder := make([]string, 0, 8)
+	hostSeen := make(map[string]int)
+	addHost := func(raw string, rank int) {
+		h := validUsageHost(raw)
+		if h == "" {
+			return
+		}
+		if _, exists := hostSeen[h]; !exists {
+			hostSeen[h] = rank
+			hostOrder = append(hostOrder, h)
+		}
+	}
+	for i, h := range seedHosts {
+		addHost(h, i)
+	}
+	for h := range usage.ByHost {
+		addHost(h, 100)
+	}
+	recentByHost := make(map[string]int)
+	for _, r := range t.ring {
+		if r.Host != "" {
+			addHost(r.Host, 200)
+			recentByHost[r.Host]++
+		}
+	}
+
+	hosts := make([]hostStatItem, 0, len(hostOrder))
+	for _, h := range hostOrder {
+		var tUV, uv30, req30 uint64
+		for _, d := range usage.ByHost[h] {
+			if d.Date == today {
+				tUV = d.UV
+			}
+			uv30 += d.UV
+			req30 += d.PageViews + d.Lookups + d.Probes
+		}
+		hosts = append(hosts, hostStatItem{
+			Host:        h,
+			TodayUV:     tUV,
+			UV30d:       uv30,
+			Requests30d: req30,
+			RecentCount: recentByHost[h],
+		})
+	}
+	slices.SortStableFunc(hosts, func(a, b hostStatItem) int {
+		ra, rb := hostSeen[a.Host], hostSeen[b.Host]
+		if (ra < 100 || rb < 100) && ra != rb {
+			return ra - rb
+		}
+		if a.Requests30d != b.Requests30d {
+			if a.Requests30d > b.Requests30d {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a.Host, b.Host)
+	})
+
+	hf := validUsageHost(hostFilter)
+	if hf == "" {
+		todayUV, yestUV, uv7, uv30 := summarizeDaysUV(usage.Days, today, yest, cut7)
+		return liveOverview{
+			TodayUV:     todayUV,
+			YestUV:      yestUV,
+			UV7d:        uv7,
+			UV30d:       uv30,
+			RecentCount: len(t.ring),
+			Hosts:       hosts,
+			Regions:     topDist(t.regions, 12),
+			ASNs:        topDist(t.asns, 12),
+			Clients:     topDist(t.clients, 12),
+			TopIPs:      topIPAgg(t.ipAgg, 100),
+		}
+	}
+
+	todayUV, yestUV, uv7, uv30 := summarizeDaysUV(usage.ByHost[hf], today, yest, cut7)
+	hRegions := make(map[string]*distCounter)
+	hASNs := make(map[string]*distCounter)
+	hClients := make(map[string]*distCounter)
+	hIPAgg := make(map[string]*ipAggState)
+	hCount := 0
+	for _, r := range t.ring {
+		if r.Host != hf {
+			continue
+		}
+		hCount++
+		vh := t.ipHash("30d|"+hf, r.IP)
+		regionKey := r.Country
+		if regionKey == "" {
+			regionKey = r.Location
+		}
+		bumpDist(hRegions, regionKey, r.CC, vh)
+		bumpDist(hASNs, strings.TrimSpace(r.ASN+" "+r.ISP), "", vh)
+		bumpDist(hClients, strings.TrimSpace(r.OS+" · "+r.Browser), "", vh)
+		bumpIPAggMap(hIPAgg, r.ID, r)
+	}
 	return liveOverview{
+		ActiveHost:  hf,
 		TodayUV:     todayUV,
 		YestUV:      yestUV,
 		UV7d:        uv7,
 		UV30d:       uv30,
-		RecentCount: len(t.ring),
-		Regions:     topDist(t.regions, 12),
-		ASNs:        topDist(t.asns, 12),
-		Clients:     topDist(t.clients, 12),
-		TopIPs:      topIPAgg(t.ipAgg, 100),
+		RecentCount: hCount,
+		Hosts:       hosts,
+		Regions:     topDist(hRegions, 12),
+		ASNs:        topDist(hASNs, 12),
+		Clients:     topDist(hClients, 12),
+		TopIPs:      topIPAgg(hIPAgg, 100),
 	}
 }
 
 type visitQuery struct {
 	Page  int
 	Size  int
+	Host  string
 	Q     string
 	Kind  string
 	From  string
@@ -412,10 +567,14 @@ func (t *liveTelemetry) queryVisits(q visitQuery, now time.Time) ([]visitRecord,
 	t.mu.Unlock()
 
 	today := now.In(usageZone).Format(time.DateOnly)
+	hf := validUsageHost(q.Host)
 	kw := strings.ToLower(strings.TrimSpace(q.Q))
 	filtered := make([]visitRecord, 0, len(snap))
 	for i := len(snap) - 1; i >= 0; i-- {
 		r := snap[i]
+		if hf != "" && r.Host != hf {
+			continue
+		}
 		if q.Today && r.Day != today {
 			continue
 		}
@@ -441,7 +600,7 @@ func (t *liveTelemetry) queryVisits(q visitQuery, now time.Time) ([]visitRecord,
 			continue
 		}
 		if kw != "" {
-			hay := strings.ToLower(r.IP + " " + r.TargetIP + " " + r.Location + " " + r.ASN + " " + r.ISP + " " + r.OS + " " + r.Browser + " " + r.TargetLabel)
+			hay := strings.ToLower(r.Host + " " + r.IP + " " + r.TargetIP + " " + r.Location + " " + r.ASN + " " + r.ISP + " " + r.OS + " " + r.Browser + " " + r.TargetLabel)
 			if !strings.Contains(hay, kw) {
 				continue
 			}
@@ -885,11 +1044,12 @@ func (panel *AdminPanel) observeRequest(srv *Server, r *http.Request, status int
 		}
 	}
 
+	reqHost := validUsageHost(r.Host)
 	panel.live.mu.Lock()
-	newUV, vHash := panel.live.markVisitorLocked(now, clientIP)
+	newUV, newHostUV, vHash := panel.live.markVisitorLocked(now, reqHost, clientIP)
 	panel.live.mu.Unlock()
 
-	panel.usage.recordDetailed(now, usageKind, newUV, isCLI, isTarget)
+	panel.usage.recordDetailed(now, reqHost, usageKind, newUV, newHostUV, isCLI, isTarget)
 
 	cSum := srv.offlineIPSummary(clientAddr)
 	targetLabel := cSum.Label
@@ -903,6 +1063,7 @@ func (panel *AdminPanel) observeRequest(srv *Server, r *http.Request, status int
 	panel.live.pushVisit(now, visitRecord{
 		Time:        now.In(usageZone).Format("2006-01-02 15:04:05"),
 		Day:         now.In(usageZone).Format(time.DateOnly),
+		Host:        reqHost,
 		IP:          clientIP,
 		CC:          cSum.CC,
 		Location:    cSum.Location,

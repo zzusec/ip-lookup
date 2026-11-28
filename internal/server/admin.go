@@ -54,6 +54,7 @@ type AdminPanel struct {
 	dataDir     string
 	authPath    string
 	seedDigest  string
+	knownHosts  []string
 	usage       *SiteUsage
 	live        *liveTelemetry
 	loginLimit  *rateLimiter
@@ -91,13 +92,13 @@ func validPrintableToken(b []byte, minLen, maxLen int) bool {
 	return true
 }
 
-func parseAdminSeed(raw []byte) (username, gateKey string, password []byte, keyedMode bool, err error) {
+func parseAdminSeed(raw []byte) (username, gateKey string, sites []string, password []byte, keyedMode bool, err error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
-		return "", "", nil, false, errors.New("empty admin credential file")
+		return "", "", nil, nil, false, errors.New("empty admin credential file")
 	}
 
-	// Detect structured key:value format (gate_key / username / password)
+	// Detect structured key:value format (gate_key / username / password / sites)
 	lines := bytes.Split(bytes.ReplaceAll(trimmed, []byte("\r\n"), []byte("\n")), []byte("\n"))
 	hasKV := false
 	for _, ln := range lines {
@@ -108,7 +109,8 @@ func parseAdminSeed(raw []byte) (username, gateKey string, password []byte, keye
 		low := strings.ToLower(s)
 		if strings.HasPrefix(low, "gate_key:") || strings.HasPrefix(low, "token:") ||
 			strings.HasPrefix(low, "username:") || strings.HasPrefix(low, "user:") ||
-			strings.HasPrefix(low, "password:") || strings.HasPrefix(low, "pass:") {
+			strings.HasPrefix(low, "password:") || strings.HasPrefix(low, "pass:") ||
+			strings.HasPrefix(low, "sites:") || strings.HasPrefix(low, "hosts:") {
 			hasKV = true
 			break
 		}
@@ -123,7 +125,7 @@ func parseAdminSeed(raw []byte) (username, gateKey string, password []byte, keye
 			}
 			idx := strings.IndexByte(s, ':')
 			if idx <= 0 {
-				return "", "", nil, false, errors.New("invalid line in admin credential file")
+				return "", "", nil, nil, false, errors.New("invalid line in admin credential file")
 			}
 			k := strings.ToLower(strings.TrimSpace(s[:idx]))
 			v := strings.TrimSpace(s[idx+1:])
@@ -132,20 +134,28 @@ func parseAdminSeed(raw []byte) (username, gateKey string, password []byte, keye
 		username = firstNonEmptyStr(kv["username"], kv["user"], "admin")
 		gateKey = firstNonEmptyStr(kv["gate_key"], kv["token"])
 		pwStr := firstNonEmptyStr(kv["password"], kv["pass"])
+		rawSites := firstNonEmptyStr(kv["sites"], kv["hosts"])
+		if rawSites != "" {
+			for _, part := range strings.FieldsFunc(rawSites, func(r rune) bool { return r == ',' || r == ';' || r == ' ' || r == '\t' }) {
+				if h := validUsageHost(part); h != "" && len(sites) < maxTrackedUsageHosts && !slices.Contains(sites, h) {
+					sites = append(sites, h)
+				}
+			}
+		}
 		if !validPrintableToken([]byte(username), 1, 64) {
-			return "", "", nil, false, errors.New("admin username must be 1 to 64 printable ASCII characters")
+			return "", "", nil, nil, false, errors.New("admin username must be 1 to 64 printable ASCII characters")
 		}
 		if gateKey != "" && !gateKeyFormat.MatchString(gateKey) {
-			return "", "", nil, false, errors.New("admin gate_key must be 8 to 64 URL-safe characters")
+			return "", "", nil, nil, false, errors.New("admin gate_key must be 8 to 64 URL-safe characters")
 		}
 		minPW := 32
 		if gateKey != "" {
 			minPW = 6
 		}
 		if !validPrintableToken([]byte(pwStr), minPW, 256) {
-			return "", "", nil, false, errors.New("admin password does not meet length or character policy")
+			return "", "", nil, nil, false, errors.New("admin password does not meet length or character policy")
 		}
-		return username, gateKey, []byte(pwStr), true, nil
+		return username, gateKey, sites, []byte(pwStr), true, nil
 	}
 
 	// Legacy single-line strong random password file (32..256 chars, >=8 distinct ASCII chars)
@@ -154,7 +164,7 @@ func parseAdminSeed(raw []byte) (username, gateKey string, password []byte, keye
 	var distinct int
 	for _, char := range pw {
 		if char < 33 || char > 126 {
-			return "", "", nil, false, errors.New("admin password must be a single line of printable ASCII without spaces")
+			return "", "", nil, nil, false, errors.New("admin password must be a single line of printable ASCII without spaces")
 		}
 		if !seen[char] {
 			seen[char] = true
@@ -162,9 +172,9 @@ func parseAdminSeed(raw []byte) (username, gateKey string, password []byte, keye
 		}
 	}
 	if len(pw) < 32 || len(pw) > 256 || distinct < 8 {
-		return "", "", nil, false, errors.New("generate a strong random admin password of 32 to 256 characters")
+		return "", "", nil, nil, false, errors.New("generate a strong random admin password of 32 to 256 characters")
 	}
-	return "admin", "", slices.Clone(pw), false, nil
+	return "admin", "", nil, slices.Clone(pw), false, nil
 }
 
 func NewAdminPanel(passwordFile, dataDir string) (*AdminPanel, error) {
@@ -199,7 +209,7 @@ func NewAdminPanel(passwordFile, dataDir string) (*AdminPanel, error) {
 		return nil, errors.New("admin credential file is too large")
 	}
 
-	username, gateKey, password, _, err := parseAdminSeed(data)
+	username, gateKey, sites, password, _, err := parseAdminSeed(data)
 	if err != nil {
 		return nil, err
 	}
@@ -221,6 +231,7 @@ func NewAdminPanel(passwordFile, dataDir string) (*AdminPanel, error) {
 		dataDir:     dataDir,
 		authPath:    filepath.Join(dataDir, "admin-auth.json"),
 		seedDigest:  seedDigest,
+		knownHosts:  sites,
 		usage:       usage,
 		live:        newLiveTelemetry(),
 		loginLimit:  newRateLimiter(8, 5*time.Minute),
@@ -611,8 +622,21 @@ func (panel *AdminPanel) register(mux *http.ServeMux, srv *Server) error {
 				return
 			}
 			now := time.Now()
-			usage := panel.usage.snapshot()
-			live := panel.live.overview(usage, now)
+			filterHost := validUsageHost(r.URL.Query().Get("host"))
+			seedHosts := slices.Clone(panel.knownHosts)
+			if rh := validUsageHost(r.Host); rh != "" && !slices.Contains(seedHosts, rh) {
+				seedHosts = append(seedHosts, rh)
+			}
+			fullUsage := panel.usage.snapshot()
+			live := panel.live.overview(fullUsage, filterHost, seedHosts, now)
+			usageView := fullUsage
+			if filterHost != "" {
+				if hDays, exists := fullUsage.ByHost[filterHost]; exists && hDays != nil {
+					usageView.Days = hDays
+				} else {
+					usageView.Days = []usageDay{}
+				}
+			}
 			panel.mu.Lock()
 			uname := panel.username
 			gk := panel.gateKey
@@ -628,7 +652,7 @@ func (panel *AdminPanel) register(mux *http.ServeMux, srv *Server) error {
 					Gated    bool   `json:"gated"`
 				} `json:"auth"`
 			}{
-				Usage:   usage,
+				Usage:   usageView,
 				Sources: model.SourcesReport{Datasets: srv.Lookup.Data.Report(), Online: srv.Lookup.Online.Report()},
 				Live:    live,
 				Auth: struct {
@@ -659,6 +683,7 @@ func (panel *AdminPanel) register(mux *http.ServeMux, srv *Server) error {
 			rows, total := panel.live.queryVisits(visitQuery{
 				Page:  max(1, page),
 				Size:  size,
+				Host:  validUsageHost(qs.Get("host")),
 				Q:     qs.Get("q"),
 				Kind:  qs.Get("kind"),
 				From:  from,

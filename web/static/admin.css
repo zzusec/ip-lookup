@@ -616,6 +616,34 @@ button {
   flex-wrap: wrap;
 }
 
+.host-switch {
+  max-width: 100%;
+}
+
+.host-pill-cnt {
+  margin-left: 4px;
+  opacity: 0.68;
+  font-size: 10.5px;
+}
+
+.multi-url-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cell-type-stack {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.host-tag-btn {
+  border: 0;
+  cursor: pointer;
+}
+
 /* Load Error Recovery */
 .load-err-wrap {
   padding-top: 48px;

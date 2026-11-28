@@ -246,7 +246,7 @@ func TestAdminStealthGateRotatePasswordAndTelemetry(t *testing.T) {
 	initGate := rand.Text()[:16]
 	initPass := rand.Text()
 	nextPass := rand.Text()
-	seed := "gate_key: " + initGate + "\nusername: operator\npassword: " + initPass + "\n"
+	seed := "gate_key: " + initGate + "\nusername: operator\npassword: " + initPass + "\nsites: ip.example.test, ip.alt.example.test\n"
 	if err := os.WriteFile(credPath, []byte(seed), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -340,8 +340,27 @@ func TestAdminStealthGateRotatePasswordAndTelemetry(t *testing.T) {
 		t.Fatalf("visits day filter failed: %d %s", emptyDay.Code, emptyDay.Body.String())
 	}
 	ovOut := req("GET", "/admin/api/overview", "", sessCookie)
-	if ovOut.Code != http.StatusOK || !strings.Contains(ovOut.Body.String(), `"topIps":[`) || !strings.Contains(ovOut.Body.String(), "203.0.113.88") {
-		t.Fatalf("overview did not include aggregated topIps: %d %s", ovOut.Code, ovOut.Body.String())
+	if ovOut.Code != http.StatusOK || !strings.Contains(ovOut.Body.String(), `"topIps":[`) || !strings.Contains(ovOut.Body.String(), "203.0.113.88") || !strings.Contains(ovOut.Body.String(), "ip.alt.example.test") {
+		t.Fatalf("overview did not include aggregated topIps and configured sites: %d %s", ovOut.Code, ovOut.Body.String())
+	}
+	altReq := httptest.NewRequest("GET", "https://ip.alt.example.test/", nil)
+	altReq.RemoteAddr = "127.0.0.1:5001"
+	altReq.Header.Set("X-Forwarded-Proto", "https")
+	altReq.Header.Set("X-Real-IP", "198.51.100.99")
+	altReq.Header.Set("Accept", "text/html")
+	altReq.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/136.0.0.0")
+	altRec := httptest.NewRecorder()
+	handler.ServeHTTP(altRec, altReq)
+	if altRec.Code != http.StatusOK {
+		t.Fatalf("alt host page failed: %d", altRec.Code)
+	}
+	ovAlt := req("GET", "/admin/api/overview?host=ip.alt.example.test", "", sessCookie)
+	if ovAlt.Code != http.StatusOK || !strings.Contains(ovAlt.Body.String(), "198.51.100.99") || strings.Contains(ovAlt.Body.String(), "203.0.113.88") {
+		t.Fatalf("host-filtered overview did not isolate ip.alt.example.test: %d %s", ovAlt.Code, ovAlt.Body.String())
+	}
+	vAlt := req("GET", "/admin/api/visits?host=ip.alt.example.test", "", sessCookie)
+	if vAlt.Code != http.StatusOK || !strings.Contains(vAlt.Body.String(), "198.51.100.99") || strings.Contains(vAlt.Body.String(), "203.0.113.88") {
+		t.Fatalf("host-filtered visits did not isolate ip.alt.example.test: %d %s", vAlt.Code, vAlt.Body.String())
 	}
 	dOut := req("GET", "/admin/api/visitor?ip=203.0.113.88", "", sessCookie)
 	if dOut.Code != http.StatusOK || !strings.Contains(dOut.Body.String(), "203.0.113.88") {

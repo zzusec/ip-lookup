@@ -314,13 +314,16 @@ code {
   margin-bottom: 16px;
 }
 .kpi-cell {
-  padding: 15px 16px 14px;
+  border: 0;
   border-right: 1px solid var(--line);
+  border-radius: 0;
+  padding: 16px 18px 15px;
   cursor: pointer;
   position: relative;
   min-width: 0;
   background: transparent;
   text-align: left;
+  font: inherit;
 }
 .kpi-cell:last-child { border-right: 0; }
 .kpi-cell::after {

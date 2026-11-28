@@ -277,7 +277,7 @@
       $('#kpi30dSub').textContent = `30日独立 IP ${uv30} · 总请求 ${sum30Pv + sum30Lookups}`;
 
       $('#kpiLookupTotal').textContent = `${sum30Lookups} 次`;
-      $('#kpiTodayModeBadge').textContent = `今日 CLI ${todayRec.cliLookups} / 实测 ${todayRec.probes}`;
+      $('#kpiTodayModeBadge').textContent = `CLI ${todayRec.cliLookups} / 实测 ${todayRec.probes}`;
       $('#kpiLookupSub').textContent = `查外部 IP ${sum30Target} · 443实测 ${sum30Probes} · 异常 ${sum30Errors}`;
     }
 
@@ -375,7 +375,8 @@
     }
 
     tbody.innerHTML = list.map(x => {
-      const geo = [x.cc ? `${flagEmoji(x.cc)}` : '', x.location, x.asn, x.isp].filter(Boolean).join(' · ') || '–';
+      const locWithFlag = x.cc ? `${flagEmoji(x.cc)} ${x.location || countryName(x.cc)}` : (x.location || '');
+      const geo = [locWithFlag, x.asn, x.isp].filter(Boolean).join(' · ') || '–';
       const dev = [x.os, x.browser].filter(Boolean).join(' · ') || '–';
       const targetsHtml = (x.targets || []).length
         ? x.targets.map(t => `<button type="button" data-openip="${esc(t)}" class="badge-amber font-mono" style="border:0;cursor:pointer">${esc(t)}</button>`).join(' ')
@@ -526,7 +527,8 @@
       } else {
         tbody.innerHTML = items.map(row => {
           const [evLabel, evCls] = KIND_BADGE[row.kind] || [row.kind || '请求', 'badge-muted'];
-          const geo = [row.cc ? flagEmoji(row.cc) : '', row.location, row.asn, row.isp].filter(Boolean).join(' · ') || '–';
+          const locWithFlag = row.cc ? `${flagEmoji(row.cc)} ${row.location || countryName(row.cc)}` : (row.location || '');
+          const geo = [locWithFlag, row.asn, row.isp].filter(Boolean).join(' · ') || '–';
           const dev = [row.os, row.browser].filter(Boolean).join(' · ') || '–';
           const tgt = row.targetIp && row.targetIp !== row.ip ? `查 ${row.targetIp}` : (row.targetLabel || '本机网络');
           const inspectIp = row.targetIp || row.ip;
